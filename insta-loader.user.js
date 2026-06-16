@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v1.0.0
+// @version            v1.1.0
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -2274,6 +2274,13 @@
     e.preventDefault();
     e.stopPropagation();
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+  }
+
+  const INJECTED_ACTION_SELECTOR =
+    ".newTab, .videoThumbnail, .IG_IMAGE_VIEWER, .IG_NEWTAB_MAIN, .IG_DW_ALL_MAIN";
+
+  function clickStartedOnInjectedAction(e) {
+    return e?.target?.closest?.(INJECTED_ACTION_SELECTOR) != null;
   }
 
   function removeMediaDialog() {
@@ -7536,7 +7543,16 @@
     );
 
     $("body").on("click", 'a[data-needed="direct"]', async function (e) {
-      consumeInjectedClick(e);
+      if (clickStartedOnInjectedAction(e)) {
+        return;
+      }
+
+      const directAnchor = e.target?.closest?.('a[data-needed="direct"]');
+      if (directAnchor !== this) {
+        return;
+      }
+
+      e.preventDefault();
       await triggerLinkElement(this);
     });
 
