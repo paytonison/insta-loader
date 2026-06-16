@@ -80,6 +80,10 @@ https://raw.githubusercontent.com/paytonison/insta-loader/main/insta-loader.user
 
 The userscript metadata uses the same raw GitHub URL for `@downloadURL` and
 `@updateURL`, so compatible managers can update it from this repository.
+Automatic install and update from that URL only work when the userscript file is
+publicly accessible. If this repository is private, install or update the script
+manually, or make the repository public before distributing it through the raw
+GitHub URL.
 
 ## Settings
 
