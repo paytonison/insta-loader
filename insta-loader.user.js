@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v0.0.0
+// @version            v1.0.0
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -150,6 +150,38 @@
   const objectUrlRevokeDelay = 60000;
   const gmDownloadObjectUrlTimeout = 30000;
   const style = GM_getResourceText("INTERNAL_CSS");
+  const injectedButtonStyle = `
+    .IG_DW_MAIN,
+    .IG_NEWTAB_MAIN,
+    .IG_THUMBNAIL_MAIN,
+    .IG_DW_ALL_MAIN,
+    .IG_IMAGE_VIEWER,
+    .IG_POPUP_DIG_BODY .newTab,
+    .IG_POPUP_DIG_BODY .videoThumbnail {
+      color: #d8dde3;
+    }
+
+    .IG_DW_MAIN svg,
+    .IG_NEWTAB_MAIN svg,
+    .IG_THUMBNAIL_MAIN svg,
+    .IG_DW_ALL_MAIN svg,
+    .IG_IMAGE_VIEWER svg,
+    .IG_POPUP_DIG_BODY .newTab svg,
+    .IG_POPUP_DIG_BODY .videoThumbnail svg {
+      fill: currentColor;
+    }
+
+    .IG_POPUP_DIG_BODY .newTab,
+    .IG_POPUP_DIG_BODY .videoThumbnail {
+      background: rgba(32, 32, 32, 0.48);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+    }
+
+    .IG_POPUP_DIG_BODY .newTab:hover,
+    .IG_POPUP_DIG_BODY .videoThumbnail:hover {
+      background: rgba(48, 48, 48, 0.62);
+    }
+  `;
   const locale_manifest = JSON.parse(GM_getResourceText("LOCALE_MANIFEST"));
 
   var state = {
@@ -207,6 +239,7 @@
   // initialization script
   initSettings();
   GM_addStyle(style);
+  GM_addStyle(injectedButtonStyle);
   registerMenuCommand();
 
   getTranslationText(state.lang)
