@@ -38,6 +38,7 @@
 // @author             paytonison; based on SN-Koarashi (5026)
 // @match              https://*.instagram.com/*
 // @grant              GM_addStyle
+// @grant              GM_download
 // @grant              GM_getResourceText
 // @grant              GM_getValue
 // @grant              GM_info
@@ -146,6 +147,8 @@
   const buttonDetectionInterval = IS_SAFARI ? 150 : 100;
   const downloadBatchSize = IS_SAFARI ? 2 : 5;
   const downloadBatchDelay = IS_SAFARI ? 700 : 350;
+  const objectUrlRevokeDelay = 60000;
+  const gmDownloadObjectUrlTimeout = 30000;
   const style = GM_getResourceText("INTERNAL_CSS");
   const locale_manifest = JSON.parse(GM_getResourceText("LOCALE_MANIFEST"));
 
@@ -1341,7 +1344,6 @@
           // Improve the selector by using the value from the getVisibleNodeIndex function in 'const $viewport'.
           const resourceCountSelector =
             "*:not([data-pagelet])>*:not([role]):not([data-pagelet])>*>*>*[role]>*>ul[class] li[class]";
-          var displayResourceURL;
 
           // not loop each in single top post
           if (tagName === "DIV" && index != 0) {
@@ -1440,7 +1442,6 @@
                   }
                   // is Image
                   else {
-                    displayResourceURL = $targetNode.find("img").attr("src");
                     $childElement.find(".button_wrapper").append(ViewerElement);
                   }
                 }
@@ -1542,15 +1543,86 @@
             ],
           });
 
-          $(this).on("click", ".IG_IMAGE_VIEWER", function () {
-            if (displayResourceURL != null) {
-              openImageViewer(displayResourceURL);
-            } else {
+          $(this).on("click", ".IG_IMAGE_VIEWER", async function (e) {
+            consumeInjectedClick(e);
+            updateLoadingBar(true);
+
+            try {
+              state.GL_username = $mainElement.attr("data-username");
+              state.GL_postPath =
+                location.pathname.replace(/\/$/, "").split("/").at(-1) ||
+                $mainElement
+                  .find('a[href^="/p/"]')
+                  .first()
+                  .attr("href")
+                  .split("/")
+                  .at(2) ||
+                $(this)
+                  .parent()
+                  .parent()
+                  .parent()
+                  .children("div:last-child")
+                  .children("div")
+                  .children("div:last-child")
+                  .find('a[href^="/p/"]')
+                  .last()
+                  .attr("href")
+                  .split("/")
+                  .at(2);
+
+              var index = getVisibleNodeIndex($mainElement);
+
+              IG_createDM(true, false);
+
+              await createMediaListDOM(
+                state.GL_postPath,
+                MEDIA_LIST_SELECTOR,
+                "",
+              );
+
+              var $linkElement = getMediaListLinkByIndex(index);
+              var href = $linkElement?.attr("data-href");
+
+              if ($linkElement == null || $linkElement.length === 0) {
+                console.error("Cannot find image viewer link element.", {
+                  index,
+                  postPath: state.GL_postPath,
+                });
+                alert("Cannot find resource url.");
+                return;
+              }
+
+              if (href) {
+                let viewerHref = href;
+                try {
+                  viewerHref = replaceSameOriginHost(href);
+                } catch (err) {
+                  logger(
+                    "Open image viewer",
+                    "replaceSameOriginHost failed, using original href",
+                    err?.message || err,
+                  );
+                }
+                openImageViewer(viewerHref);
+              } else {
+                console.error("Cannot find image viewer data-href.", {
+                  index,
+                  postPath: state.GL_postPath,
+                  linkElement: $linkElement?.get(0),
+                });
+                alert("Cannot find resource url.");
+              }
+            } catch (err) {
+              console.error("Failed to open image viewer:", err);
               alert("Cannot find resource url.");
+            } finally {
+              updateLoadingBar(false);
+              removeMediaDialog();
             }
           });
 
-          $(this).on("click", ".IG_THUMBNAIL_MAIN", function () {
+          $(this).on("click", ".IG_THUMBNAIL_MAIN", function (e) {
+            consumeInjectedClick(e);
             updateLoadingBar(true);
 
             state.GL_username = $mainElement.attr("data-username");
@@ -1600,63 +1672,83 @@
             });
           });
 
-          $(this).on("click", ".IG_NEWTAB_MAIN", function () {
+          $(this).on("click", ".IG_NEWTAB_MAIN", async function (e) {
+            consumeInjectedClick(e);
             updateLoadingBar(true);
 
-            state.GL_username = $mainElement.attr("data-username");
-            state.GL_postPath =
-              location.pathname.replace(/\/$/, "").split("/").at(-1) ||
-              $mainElement
-                .find('a[href^="/p/"]')
-                .first()
-                .attr("href")
-                .split("/")
-                .at(2) ||
-              $(this)
-                .parent()
-                .parent()
-                .parent()
-                .children("div:last-child")
-                .children("div")
-                .children("div:last-child")
-                .find('a[href^="/p/"]')
-                .last()
-                .attr("href")
-                .split("/")
-                .at(2);
+            try {
+              state.GL_username = $mainElement.attr("data-username");
+              state.GL_postPath =
+                location.pathname.replace(/\/$/, "").split("/").at(-1) ||
+                $mainElement
+                  .find('a[href^="/p/"]')
+                  .first()
+                  .attr("href")
+                  .split("/")
+                  .at(2) ||
+                $(this)
+                  .parent()
+                  .parent()
+                  .parent()
+                  .children("div:last-child")
+                  .children("div")
+                  .children("div:last-child")
+                  .find('a[href^="/p/"]')
+                  .last()
+                  .attr("href")
+                  .split("/")
+                  .at(2);
 
-            var index = getVisibleNodeIndex($mainElement);
+              var index = getVisibleNodeIndex($mainElement);
 
-            IG_createDM(true, false);
+              IG_createDM(true, false);
 
-            createMediaListDOM(
-              state.GL_postPath,
-              MEDIA_LIST_SELECTOR,
-              "",
-            ).then(() => {
+              await createMediaListDOM(
+                state.GL_postPath,
+                MEDIA_LIST_SELECTOR,
+                "",
+              );
+
               var $linkElement = getMediaListLinkByIndex(index);
 
               if (
                 USER_SETTING.FORCE_RESOURCE_VIA_MEDIA &&
                 USER_SETTING.NEW_TAB_ALWAYS_FORCE_MEDIA_IN_POST
               ) {
-                triggerLinkElement($linkElement.first()[0], true);
+                if ($linkElement == null || $linkElement.length === 0) {
+                  console.error("Cannot find new-tab link element.", {
+                    index,
+                    postPath: state.GL_postPath,
+                  });
+                  alert("Cannot find open tab URL.");
+                  return;
+                }
+                await triggerLinkElement($linkElement.first()[0], true);
               } else {
                 let href = $linkElement?.attr("data-href");
                 if (href) {
                   openNewTab(replaceSameOriginHost(href));
                 } else {
+                  console.error("Cannot find new-tab data-href.", {
+                    index,
+                    postPath: state.GL_postPath,
+                    linkElement: $linkElement?.get(0),
+                  });
                   alert("Cannot find open tab URL.");
                 }
               }
-
+            } catch (err) {
+              console.error("Failed to open resource in new tab:", err);
+              alert("Cannot find open tab URL.");
+            } finally {
               updateLoadingBar(false);
               removeMediaDialog();
-            });
+            }
           });
 
           // Running if user click the download all icon
-          $(this).on("click", ".IG_DW_ALL_MAIN", async function () {
+          $(this).on("click", ".IG_DW_ALL_MAIN", async function (e) {
+            consumeInjectedClick(e);
             state.GL_username = $mainElement.attr("data-username");
             state.GL_postPath =
               location.pathname.replace(/\/$/, "").split("/").at(-1) ||
@@ -1704,19 +1796,18 @@
               },
             );
 
-            createMediaListDOM(
+            await createMediaListDOM(
               state.GL_postPath,
               MEDIA_LIST_SELECTOR,
               _i18n("LOAD_BLOB_MULTIPLE"),
-            ).then(() => {
-              batchDownloadPostFiles(getMediaListLinks()).then(() => {
-                removeMediaDialog();
-              });
-            });
+            );
+            await batchDownloadPostFiles(getMediaListLinks());
+            removeMediaDialog();
           });
 
           // Running if user click the download icon
-          $(this).on("click", ".IG_DW_MAIN", async function () {
+          $(this).on("click", ".IG_DW_MAIN", async function (e) {
+            consumeInjectedClick(e);
             state.GL_username = $mainElement.attr("data-username");
             state.GL_postPath =
               location.pathname.replace(/\/$/, "").split("/").at(-1) ||
@@ -1754,23 +1845,35 @@
                 $(this).parent().parent().parent(),
               );
 
-              createMediaListDOM(
+              await createMediaListDOM(
                 state.GL_postPath,
                 MEDIA_LIST_SELECTOR,
                 "",
-              ).then(() => {
-                var $linkElement = getMediaListLinkByIndex(index);
-                var href = $linkElement?.attr("data-href");
+              );
 
-                if (href) {
-                  updateLoadingBar(false);
-                  triggerLinkElement($linkElement[0]);
-                } else {
-                  alert("Cannot find download URL.");
-                }
+              var $linkElement = getMediaListLinkByIndex(index);
+              var href = $linkElement?.attr("data-href");
 
-                removeMediaDialog();
-              });
+              if ($linkElement == null || $linkElement.length === 0) {
+                console.error("Cannot find download link element.", {
+                  index,
+                  postPath: state.GL_postPath,
+                });
+                alert("Cannot find download URL.");
+              } else if (href) {
+                updateLoadingBar(false);
+                await triggerLinkElement($linkElement[0]);
+              } else {
+                console.error("Cannot find download data-href.", {
+                  index,
+                  postPath: state.GL_postPath,
+                  linkElement: $linkElement?.get(0),
+                });
+                alert("Cannot find download URL.");
+              }
+
+              updateLoadingBar(false);
+              removeMediaDialog();
 
               return;
             }
@@ -1917,15 +2020,13 @@
             );
 
             if (USER_SETTING.DIRECT_DOWNLOAD_ALL) {
-              createMediaListDOM(
+              await createMediaListDOM(
                 state.GL_postPath,
                 MEDIA_LIST_SELECTOR,
                 _i18n("LOAD_BLOB_MULTIPLE"),
-              ).then(() => {
-                batchDownloadPostFiles(getMediaListLinks()).then(() => {
-                  removeMediaDialog();
-                });
-              });
+              );
+              await batchDownloadPostFiles(getMediaListLinks());
+              removeMediaDialog();
             }
           });
 
@@ -2134,6 +2235,12 @@
     return $(
       `${MEDIA_LIST_SELECTOR} a[data-globalindex="${index + 1}"]`,
     ).first();
+  }
+
+  function consumeInjectedClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
   }
 
   function removeMediaDialog() {
@@ -4648,12 +4755,144 @@
     }
   }
 
+  function isGMDownloadAvailable() {
+    return typeof GM_download === "function";
+  }
+
+  function getDownloadErrorMessage(err) {
+    return err?.error || err?.message || err?.details || String(err);
+  }
+
+  function downloadWithGM(downloadLink, filename, timeout) {
+    return new Promise((resolve, reject) => {
+      if (!isGMDownloadAvailable()) {
+        reject(new Error("GM_download is not available."));
+        return;
+      }
+
+      let settled = false;
+      let timeoutId = null;
+      let downloadTask = null;
+
+      const settle = (handler, value) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId != null) {
+          clearTimeout(timeoutId);
+        }
+        handler(value);
+      };
+
+      try {
+        downloadTask = GM_download({
+          url: downloadLink,
+          name: filename,
+          saveAs: false,
+          onload: () => settle(resolve, true),
+          onerror: (err) =>
+            settle(reject, new Error(getDownloadErrorMessage(err))),
+          ontimeout: (err) =>
+            settle(reject, new Error(getDownloadErrorMessage(err))),
+        });
+
+        if (timeout) {
+          timeoutId = setTimeout(() => {
+            if (downloadTask?.abort) {
+              downloadTask.abort();
+            }
+            settle(reject, new Error("GM_download timed out."));
+          }, timeout);
+        }
+      } catch (err) {
+        settle(reject, err);
+      }
+    });
+  }
+
+  function triggerAnchorDownload(downloadLink, filename) {
+    return new Promise((resolve, reject) => {
+      try {
+        const link = document.createElement("a");
+        link.href = downloadLink;
+        link.download = filename;
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => resolve(true), 125);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  function shouldFetchBlobBeforeDownload(metadata) {
+    return (
+      USER_SETTING.MODIFY_RESOURCE_EXIF &&
+      metadata.filetype === "jpg" &&
+      metadata.shortcode &&
+      metadata.sourceType === "photo"
+    );
+  }
+
+  function shouldModifyExifBlob(object, metadata) {
+    return (
+      shouldFetchBlobBeforeDownload(metadata) &&
+      (object.type === "image/jpeg" || object.type === "image/webp")
+    );
+  }
+
+  function saveFilenameNeedsUid() {
+    return state.fileRenameFormat.toUpperCase().includes("%UID%");
+  }
+
+  async function prepareSaveMetadata(metadata, needsUid) {
+    const prepared = { ...metadata };
+
+    if (prepared.uid == null && needsUid) {
+      const userInfo = await getUserId(prepared.username);
+      prepared.uid = userInfo?.user?.id || null;
+    }
+
+    return prepared;
+  }
+
+  async function triggerDirectDownload(downloadLink, filename) {
+    if (isGMDownloadAvailable()) {
+      try {
+        await downloadWithGM(downloadLink, filename);
+        return true;
+      } catch (err) {
+        logger(
+          "triggerDirectDownload()",
+          "GM_download failed, falling back to blob download",
+          getDownloadErrorMessage(err),
+        );
+      }
+    }
+
+    const blob = await fetchMediaBlob(downloadLink);
+    return await triggerDownload(blob, filename);
+  }
+
   async function saveFiles(downloadLink, metadata) {
     updateLoadingBar(true);
     try {
+      if (!downloadLink) {
+        throw new Error("Missing download URL.");
+      }
+
+      if (!shouldFetchBlobBeforeDownload(metadata)) {
+        const preparedMetadata = await prepareSaveMetadata(
+          metadata,
+          saveFilenameNeedsUid(),
+        );
+        const downloadName = getSaveFileName(downloadLink, preparedMetadata);
+        return await triggerDirectDownload(downloadLink, downloadName);
+      }
+
       const dwel = await fetchMediaBlob(downloadLink);
-      await createSaveFileElement(downloadLink, dwel, metadata);
-      return true;
+      return await createSaveFileElement(downloadLink, dwel, metadata);
     } catch (err) {
       console.error("Failed to save media:", err);
       logger("saveFiles()", "failed", err?.message || err);
@@ -4868,14 +5107,13 @@
         "[DASH]",
         "Downloaded DASH video only (no audio rep / has_audio=false).",
       );
-      await saveFiles(videoUrl, {
+      return await saveFiles(videoUrl, {
         username,
         sourceType,
         timestamp,
         filetype: "mp4",
         shortcode,
       });
-      return true;
     }
 
     try {
@@ -4892,7 +5130,7 @@
       const mergedBuf = await muxDashVideoAudioToMp4(vBuf, aBuf);
       const mergedBlob = new Blob([mergedBuf], { type: "video/mp4" });
 
-      await createSaveFileElement(videoUrl, mergedBlob, {
+      const downloadStarted = await createSaveFileElement(videoUrl, mergedBlob, {
         username,
         sourceType,
         timestamp,
@@ -4900,28 +5138,28 @@
         shortcode,
       });
       logger("[DASH]", "Merged MP4 download triggered.");
-      return true;
+      return downloadStarted;
     } catch (e) {
       logger(
         "[DASH]",
         "Mux failed -> fallback to separate downloads",
         e?.message || e,
       );
-      await saveFiles(videoUrl, {
+      const videoDownloadStarted = await saveFiles(videoUrl, {
         username,
         sourceType,
         timestamp,
         filetype: "mp4",
         shortcode,
       });
-      await saveFiles(audioUrl, {
+      const audioDownloadStarted = await saveFiles(audioUrl, {
         username,
         sourceType,
         timestamp,
         filetype: "m4a",
         shortcode,
       });
-      return true;
+      return videoDownloadStarted && audioDownloadStarted;
     }
   }
 
@@ -4978,7 +5216,7 @@
 
       if (!aUrl) {
         logger("[DASH]", "download mode -> VIDEO-ONLY DASH (no audio rep)");
-        await saveFiles(vUrl, {
+        return await saveFiles(vUrl, {
           username,
           sourceType,
           timestamp,
@@ -4986,11 +5224,10 @@
           shortcode,
           index,
         });
-        return true;
       }
 
       logger("[DASH]", "download mode -> DASH video+audio");
-      await downloadDashStreams(
+      return await downloadDashStreams(
         vUrl,
         aUrl,
         username,
@@ -4998,7 +5235,6 @@
         timestamp,
         shortcode,
       );
-      return true;
     } catch (e) {
       logger(
         "[DASH]",
@@ -5014,19 +5250,44 @@
    *
    * @param {Blob} blob
    * @param {string} filename
+   * @return {Promise<boolean>}
    */
-  function triggerDownload(blob, filename) {
-    const link = document.createElement("a");
+  async function triggerDownload(blob, filename) {
     const objectUrl = URL.createObjectURL(blob);
-    link.href = objectUrl;
-    link.download = filename;
-    link.style.display = "none";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => {
+    let revoked = false;
+
+    const revokeObjectUrl = () => {
+      if (revoked) return;
+      revoked = true;
       URL.revokeObjectURL(objectUrl);
-    }, 60000);
+    };
+
+    try {
+      if (isGMDownloadAvailable()) {
+        try {
+          await downloadWithGM(
+            objectUrl,
+            filename,
+            gmDownloadObjectUrlTimeout,
+          );
+          revokeObjectUrl();
+          return true;
+        } catch (err) {
+          logger(
+            "triggerDownload()",
+            "GM_download failed for blob URL, falling back to anchor download",
+            getDownloadErrorMessage(err),
+          );
+        }
+      }
+
+      await triggerAnchorDownload(objectUrl, filename);
+      setTimeout(revokeObjectUrl, objectUrlRevokeDelay);
+      return true;
+    } catch (err) {
+      revokeObjectUrl();
+      throw err;
+    }
   }
 
   /**
@@ -5120,40 +5381,31 @@
    * @param  {String}  metadata.shortcode
    * @param  {Integer|null}  metadata.index
    * @param  {String|null}  metadata.uid
-   * @return {void}
+   * @return {Promise<boolean>}
    */
   async function createSaveFileElement(downloadLink, object, metadata) {
-    let { username, sourceType, filetype, shortcode } = metadata;
-    const shouldModifyExif =
-      USER_SETTING.MODIFY_RESOURCE_EXIF &&
-      filetype === "jpg" &&
-      shortcode &&
-      sourceType === "photo" &&
-      (object.type === "image/jpeg" || object.type === "image/webp");
-    const filenameNeedsUid = state.fileRenameFormat
-      .toUpperCase()
-      .includes("%UID%");
+    const shouldModifyExif = shouldModifyExifBlob(object, metadata);
+    const preparedMetadata = await prepareSaveMetadata(
+      metadata,
+      shouldModifyExif || saveFilenameNeedsUid(),
+    );
 
-    if (metadata.uid == null && (shouldModifyExif || filenameNeedsUid)) {
-      const userInfo = await getUserId(username);
-      metadata.uid = userInfo?.user?.id || null;
-    }
-
-    const downloadName = getSaveFileName(downloadLink, metadata);
+    const downloadName = getSaveFileName(downloadLink, preparedMetadata);
 
     if (shouldModifyExif) {
-      changeExifData(object, metadata)
-        .then((newBlob) => triggerDownload(newBlob, downloadName))
-        .catch((err) => {
-          console.error(
-            "Failed to strip EXIF and/or attach post URL to EXIF.",
-            err,
-          );
-          triggerDownload(object, downloadName);
-        });
-    } else {
-      triggerDownload(object, downloadName);
+      try {
+        const newBlob = await changeExifData(object, preparedMetadata);
+        return await triggerDownload(newBlob, downloadName);
+      } catch (err) {
+        console.error(
+          "Failed to strip EXIF and/or attach post URL to EXIF.",
+          err,
+        );
+        return await triggerDownload(object, downloadName);
+      }
     }
+
+    return await triggerDownload(object, downloadName);
   }
 
   /**
@@ -5379,10 +5631,14 @@
    * @description Trigger the link element to start downloading the resource.
    *
    * @param  {Object}  element
-   * @return {void}
+   * @return {Promise<boolean>}
    */
   async function triggerLinkElement(element, isPreview) {
     try {
+      if (!element) {
+        throw new Error("Missing link element.");
+      }
+
       let date = new Date().getTime();
       let timestamp = Math.floor(date / 1000);
       let username = $(element).attr("data-username")
@@ -5435,7 +5691,7 @@
           index,
         });
         if (handled) {
-          return;
+          return true;
         }
       }
 
@@ -5444,8 +5700,9 @@
         if (cached && $(element).data("type") != "mp4") {
           if (isPreview) {
             openNewTab(cached);
+            return true;
           } else {
-            saveFiles(cached, {
+            return await saveFiles(cached, {
               username,
               sourceType: $(element).data("name"),
               timestamp,
@@ -5454,7 +5711,6 @@
               index,
             });
           }
-          return;
         }
       }
 
@@ -5515,8 +5771,9 @@
 
           if (isPreview) {
             openNewTab(replaceSameOriginHost(resource_url));
+            return true;
           } else {
-            saveFiles(resource_url, {
+            return await saveFiles(resource_url, {
               username,
               sourceType: $(element).attr("data-name"),
               timestamp,
@@ -5527,9 +5784,18 @@
         } else {
           if (USER_SETTING.FALLBACK_TO_BLOB_FETCH_IF_MEDIA_API_THROTTLED) {
             if (isPreview) {
-              openNewTab(replaceSameOriginHost($(element).attr("data-href")));
+              const fallbackHref = $(element).attr("data-href");
+              if (!fallbackHref) {
+                throw new Error("Missing fallback data-href.");
+              }
+              openNewTab(replaceSameOriginHost(fallbackHref));
+              return true;
             } else {
-              saveFiles($(element).attr("data-href"), {
+              const fallbackHref = $(element).attr("data-href");
+              if (!fallbackHref) {
+                throw new Error("Missing fallback data-href.");
+              }
+              return await saveFiles(fallbackHref, {
                 username,
                 sourceType: $(element).attr("data-name"),
                 timestamp,
@@ -5542,11 +5808,16 @@
               "Fetch failed from Media API. API response message: " +
                 result.message,
             );
+            return false;
           }
           logger(result);
         }
       } else {
-        saveFiles($(element).attr("data-href"), {
+        const href = $(element).attr("data-href");
+        if (!href) {
+          throw new Error("Missing data-href.");
+        }
+        return await saveFiles(href, {
           username,
           sourceType: $(element).attr("data-name"),
           timestamp,
@@ -5557,6 +5828,7 @@
     } catch (err) {
       console.error("Occur error in triggerLinkElement:", err);
       logger("Occur error in triggerLinkElement:", err);
+      return false;
     }
   }
 
@@ -7230,27 +7502,40 @@
       },
     );
 
-    $("body").on("click", 'a[data-needed="direct"]', function (e) {
-      e.preventDefault();
-      triggerLinkElement(this);
+    $("body").on("click", 'a[data-needed="direct"]', async function (e) {
+      consumeInjectedClick(e);
+      await triggerLinkElement(this);
     });
 
-    $("body").on("click", ".IG_POPUP_DIG_BODY .newTab", function () {
+    $("body").on("click", ".IG_POPUP_DIG_BODY .newTab", async function (e) {
+      consumeInjectedClick(e);
+      const $linkElement = $(this).parent().children("a").first();
+
       if (
         USER_SETTING.FORCE_RESOURCE_VIA_MEDIA &&
         USER_SETTING.NEW_TAB_ALWAYS_FORCE_MEDIA_IN_POST
       ) {
-        triggerLinkElement($(this).parent().children("a").first()[0], true);
+        if ($linkElement.length === 0) {
+          console.error("Cannot find popup new-tab link element.");
+          alert("Cannot find open tab URL.");
+          return;
+        }
+        await triggerLinkElement($linkElement[0], true);
       } else {
-        openNewTab(
-          replaceSameOriginHost(
-            $(this).parent().children("a").attr("data-href"),
-          ),
-        );
+        const href = $linkElement.attr("data-href");
+        if (!href) {
+          console.error("Cannot find popup new-tab data-href.", {
+            linkElement: $linkElement.get(0),
+          });
+          alert("Cannot find open tab URL.");
+          return;
+        }
+        openNewTab(replaceSameOriginHost(href));
       }
     });
 
-    $("body").on("click", ".IG_POPUP_DIG_BODY .videoThumbnail", function () {
+    $("body").on("click", ".IG_POPUP_DIG_BODY .videoThumbnail", async function (e) {
+      consumeInjectedClick(e);
       let timestamp = new Date().getTime();
 
       if (
@@ -7269,18 +7554,17 @@
         const cached = getImageFromCache(mediaId);
         if (cached) {
           logger("[Restore Cached postThumbnail]", mediaId);
-          saveFiles(cached, {
+          return await saveFiles(cached, {
             username: $(this).parent().children("a").attr("data-username"),
             sourceType: "thumbnail",
             timestamp,
             filetype: "jpg",
             shortcode: postPath,
           });
-          return;
         }
       }
 
-      saveFiles(
+      return await saveFiles(
         $(this).parent().children("a").find("img").first().attr("src"),
         {
           username: $(this).parent().children("a").attr("data-username"),
@@ -7409,7 +7693,8 @@
     $("body").on(
       "click",
       ".IG_POPUP_DIG_TITLE #batch_download_selected",
-      function () {
+      async function (e) {
+        consumeInjectedClick(e);
         let index = 0;
         let links = [];
         $('.IG_POPUP_DIG_BODY a[data-needed="direct"]').each(function () {
@@ -7423,7 +7708,7 @@
         if (index == 0) {
           alert(_i18n("NO_CHECK_RESOURCE"));
         } else {
-          batchDownloadPostFiles(links);
+          await batchDownloadPostFiles(links);
         }
       },
     );
@@ -7453,13 +7738,14 @@
     $("body").on(
       "click",
       ".IG_POPUP_DIG_TITLE #batch_download_direct",
-      function () {
+      async function (e) {
+        consumeInjectedClick(e);
         let links = [];
         $('.IG_POPUP_DIG_BODY a[data-needed="direct"]').each(function () {
           links.push($(this));
         });
 
-        batchDownloadPostFiles(links);
+        await batchDownloadPostFiles(links);
       },
     );
 
