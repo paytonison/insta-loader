@@ -17,16 +17,19 @@ main controls are:
 
 - **Download**: download the current visible photo or video.
 - **Download All Resources**: collect every item in a carousel, story sequence,
-  or highlight sequence and download them in a throttled batch.
+  or highlight sequence and download them in a throttled batch without opening
+  the media picker.
 - **Open in New Tab**: open the resolved media URL directly, which is useful
   when you want to inspect the file before saving it.
 - **Download Video Thumbnail**: save the still image associated with a video.
 - **Open Image In Viewer**: open photos in an in-page viewer with zoom, pan, and
   rotate controls.
 
-For multi-item posts, the script can show a media picker dialog. The dialog
-lists each detected image or video, includes a checkbox for each resource, and
-offers both **Download Selected Resources** and **Download All Resources**.
+For multi-item posts, the ordinary **Download** action can still show a media
+picker when direct-download settings are disabled. The dialog lists each
+detected image or video, includes a checkbox for each resource, and offers both
+**Download Selected Resources** and **Download All Resources**. The dedicated
+double-chevron **Download All Resources** control skips this dialog.
 
 ## Supported Instagram surfaces
 
