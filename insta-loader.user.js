@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v1.2.0
+// @version            v1.2.2
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -347,6 +347,36 @@
 
     .IG_DWPROFILE {
       border-radius: 50%;
+    }
+
+    /* Keep Reels controls out of Safari's dynamic backdrop-filter layers.
+       Instagram repaints this rail when Like state changes. */
+    .IG_REELS,
+    .IG_REELS_NEWTAB,
+    .IG_REELS_THUMBNAIL {
+      background: rgba(24, 24, 27, 0.97);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+
+    .IG_REELS_CONTROLS {
+      display: flex;
+      flex: 0 0 auto;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      margin: 0 0 20px;
+      pointer-events: none;
+    }
+
+    .IG_REELS_CONTROLS > .IG_REELS,
+    .IG_REELS_CONTROLS > .IG_REELS_NEWTAB,
+    .IG_REELS_CONTROLS > .IG_REELS_THUMBNAIL {
+      position: static;
+      top: auto;
+      right: auto;
+      flex: 0 0 auto;
+      pointer-events: auto;
     }
 
     .IG_DWSTORY_POSITION,
@@ -3839,24 +3869,41 @@
   }
 
   function appendReelsButton($main) {
-    if (!$main.children().find(".IG_REELS").length) {
-      $main.children().css("position", "relative");
+    if (!$main.find(".IG_REELS_CONTROLS").length) {
+      const $actionRail = $main
+        .find("div")
+        .filter(function () {
+          const rect = this.getBoundingClientRect();
+          const computedStyle = window.getComputedStyle(this);
+          const directActionGroups = $(this)
+            .children()
+            .filter(function () {
+              return $(this).find('[role="button"] svg[aria-label]').length > 0;
+            }).length;
 
-      $main
-        .children()
-        .append(
-          `<div data-ih-locale-title="DW" title="${_i18n("DW")}" class="IG_REELS">${SVG.DOWNLOAD}</div>`,
-        );
-      $main
-        .children()
-        .append(
-          `<div data-ih-locale-title="NEW_TAB" title="${_i18n("NEW_TAB")}" class="IG_REELS_NEWTAB">${SVG.NEW_TAB}</div>`,
-        );
-      $main
-        .children()
-        .append(
-          `<div data-ih-locale-title="VIDEO_THUMBNAIL" title="${_i18n("VIDEO_THUMBNAIL")}" class="IG_REELS_THUMBNAIL">${SVG.THUMBNAIL}</div>`,
-        );
+          return (
+            computedStyle.display === "flex" &&
+            computedStyle.flexDirection === "column" &&
+            rect.width > 0 &&
+            rect.width <= 120 &&
+            rect.height >= 180 &&
+            directActionGroups >= 3
+          );
+        })
+        .first();
+
+      if (!$actionRail.length) {
+        logger("Unable to locate the Reels action rail");
+        return;
+      }
+
+      $actionRail.prepend(
+        `<div class="IG_REELS_CONTROLS" data-insta-loader-controls="reels">
+          <div data-ih-locale-title="DW" title="${_i18n("DW")}" class="IG_REELS">${SVG.DOWNLOAD}</div>
+          <div data-ih-locale-title="NEW_TAB" title="${_i18n("NEW_TAB")}" class="IG_REELS_NEWTAB">${SVG.NEW_TAB}</div>
+          <div data-ih-locale-title="VIDEO_THUMBNAIL" title="${_i18n("VIDEO_THUMBNAIL")}" class="IG_REELS_THUMBNAIL">${SVG.THUMBNAIL}</div>
+        </div>`,
+      );
 
       $main.find("video").each(function () {
         $(this)
