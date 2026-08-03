@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v1.1.0
+// @version            v1.2.3
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -124,22 +124,22 @@
     ".IG_POPUP_DIG .IG_POPUP_DIG_MAIN .IG_POPUP_DIG_BODY";
   /*******************************/
 
-  // Icon download by Google Fonts Material Icon
+  // Precision line icons shared by every Insta-loader surface.
   const SVG = {
     DOWNLOAD:
-      '<svg xmlns="http://www.w3.org/2000/svg" enable-background="new 0 0 24 24" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><g><rect fill="none" height="24" width="24"/></g><g><path d="M18,15v3H6v-3H4v3c0,1.1,0.9,2,2,2h12c1.1,0,2-0.9,2-2v-3H18z M17,11l-1.41-1.41L13,12.17V4h-2v8.17L8.41,9.59L7,11l5,5 L17,11z"/></g></svg>',
+      '<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.75v10.5"/><path d="m8.25 10.5 3.75 3.75 3.75-3.75"/><path d="M5.25 16.75v1.5c0 .97.78 1.75 1.75 1.75h10c.97 0 1.75-.78 1.75-1.75v-1.5"/></svg>',
     NEW_TAB:
-      '<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>',
+      '<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 4.75h5.75v5.75"/><path d="m19 5-8 8"/><path d="M10.25 6h-3.5A1.75 1.75 0 0 0 5 7.75v9.5C5 18.22 5.78 19 6.75 19h9.5c.97 0 1.75-.78 1.75-1.75v-3.5"/></svg>',
     THUMBNAIL:
-      '<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M19 5v14H5V5h14m0-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4.86 8.86l-3 3.87L9 13.14 6 17h12l-3.86-5.14z"/></svg>',
+      '<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3.75" y="4.5" width="16.5" height="15" rx="2.25"/><circle cx="9" cy="9.25" r="1.25"/><path d="m5.5 17 4.25-4.25 2.75 2.75 2.25-2.25L18.5 17"/></svg>',
     DOWNLOAD_ALL:
-      '<svg xmlns="http://www.w3.org/2000/svg" enable-background="new 0 0 24 24" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><g><rect fill="none" height="24" width="24"/></g><g><g><polygon points="18,6.41 16.59,5 12,9.58 7.41,5 6,6.41 12,12.41"/><polygon points="18,13 16.59,11.59 12,16.17 7.41,11.59 6,13 12,19"/></g></g></svg>',
+      '<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m7.5 6.5 4.5 4 4.5-4"/><path d="m7.5 13.5 4.5 4 4.5-4"/></svg>',
     CLOSE:
-      '<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>',
+      '<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="m6.5 6.5 11 11"/><path d="m17.5 6.5-11 11"/></svg>',
     FULLSCREEN:
-      '<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#000000"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
+      '<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9.25 4.75h-4.5v4.5"/><path d="M14.75 4.75h4.5v4.5"/><path d="M19.25 14.75v4.5h-4.5"/><path d="M9.25 19.25h-4.5v-4.5"/></svg>',
     TURN_DEG:
-      '<svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 0 24 24" width="24px" fill="#1f1f1f"><path d="M0 0h24v24H0V0z" fill="none"/><path d="M7.34 6.41L.86 12.9l6.49 6.48 6.49-6.48-6.5-6.49zM3.69 12.9l3.66-3.66L11 12.9l-3.66 3.66-3.65-3.66zm15.67-6.26C17.61 4.88 15.3 4 13 4V.76L8.76 5 13 9.24V6c1.79 0 3.58.68 4.95 2.05 2.73 2.73 2.73 7.17 0 9.9C16.58 19.32 14.79 20 13 20c-.97 0-1.94-.21-2.84-.61l-1.49 1.49C10.02 21.62 11.51 22 13 22c2.3 0 4.61-.88 6.36-2.64 3.52-3.51 3.52-9.21 0-12.72z"/></svg>',
+      '<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7.25 7.5h-3.5V4"/><path d="M4.4 7.1A8 8 0 1 1 4.5 16.75"/></svg>',
   };
 
   /*******************************/
@@ -151,35 +151,1158 @@
   const gmDownloadObjectUrlTimeout = 30000;
   const style = GM_getResourceText("INTERNAL_CSS");
   const injectedButtonStyle = `
+    :root {
+      --insta-loader-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+      --insta-loader-bg: rgba(24, 24, 27, 0.92);
+      --insta-loader-bg-strong: rgba(13, 13, 15, 0.97);
+      --insta-loader-surface: rgba(255, 255, 255, 0.07);
+      --insta-loader-surface-hover: rgba(255, 255, 255, 0.12);
+      --insta-loader-surface-pressed: rgba(255, 255, 255, 0.16);
+      --insta-loader-text: #f5f5f7;
+      --insta-loader-secondary-text: rgba(235, 235, 245, 0.62);
+      --insta-loader-tertiary-text: rgba(235, 235, 245, 0.42);
+      --insta-loader-separator: rgba(255, 255, 255, 0.14);
+      --insta-loader-accent: #0a84ff;
+      --insta-loader-accent-hover: #409cff;
+      --insta-loader-danger: #ff453a;
+      --insta-loader-radius-large: 20px;
+      --insta-loader-radius-medium: 12px;
+      --insta-loader-radius-small: 9px;
+      --insta-loader-shadow: 0 24px 80px rgba(0, 0, 0, 0.48), 0 2px 12px rgba(0, 0, 0, 0.28);
+    }
+
+    .button_wrapper,
+    .IG_POPUP_DIG,
+    #imageViewer,
+    .circle_wrapper,
+    #scrollWrapper,
+    .volume_slider {
+      font-family: var(--insta-loader-font);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    .button_wrapper {
+      right: 16px;
+      line-height: 0;
+      flex-flow: row-reverse nowrap;
+      gap: 2px;
+      z-index: 6;
+      padding: 5px;
+      overflow: hidden;
+      isolation: isolate;
+      background: linear-gradient(180deg, rgba(38, 38, 42, 0.84), rgba(16, 16, 18, 0.8));
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 16px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      -webkit-backdrop-filter: saturate(180%) blur(22px);
+      backdrop-filter: saturate(180%) blur(22px);
+    }
+
     .IG_DW_MAIN,
     .IG_NEWTAB_MAIN,
     .IG_THUMBNAIL_MAIN,
     .IG_DW_ALL_MAIN,
-    .IG_IMAGE_VIEWER,
-    .IG_POPUP_DIG_BODY .newTab,
-    .IG_POPUP_DIG_BODY .videoThumbnail {
-      color: #d8dde3;
+    .IG_IMAGE_VIEWER {
+      position: relative;
+      top: 0;
+      display: inline-flex;
+      flex: 0 0 32px;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      box-sizing: border-box;
+      color: rgba(255, 255, 255, 0.82);
+      background: transparent;
+      border: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .IG_DW_MAIN:hover,
+    .IG_NEWTAB_MAIN:hover,
+    .IG_THUMBNAIL_MAIN:hover,
+    .IG_DW_ALL_MAIN:hover,
+    .IG_IMAGE_VIEWER:hover {
+      color: #fff;
+      background: var(--insta-loader-surface-hover);
+      transform: translateY(-1px);
+    }
+
+    .IG_DW_MAIN:active,
+    .IG_NEWTAB_MAIN:active,
+    .IG_THUMBNAIL_MAIN:active,
+    .IG_DW_ALL_MAIN:active,
+    .IG_IMAGE_VIEWER:active {
+      background: var(--insta-loader-surface-pressed);
+      transform: scale(0.94);
+    }
+
+    .IG_DW_ALL_MAIN.is-busy {
+      color: #fff;
+      background: var(--insta-loader-surface-hover);
+      cursor: progress;
+      pointer-events: none;
+    }
+
+    .IG_DW_ALL_MAIN.is-busy svg {
+      animation: insta-loader-breathe 900ms ease-in-out infinite alternate;
     }
 
     .IG_DW_MAIN svg,
     .IG_NEWTAB_MAIN svg,
     .IG_THUMBNAIL_MAIN svg,
     .IG_DW_ALL_MAIN svg,
-    .IG_IMAGE_VIEWER svg,
-    .IG_POPUP_DIG_BODY .newTab svg,
-    .IG_POPUP_DIG_BODY .videoThumbnail svg {
-      fill: currentColor;
+    .IG_IMAGE_VIEWER svg {
+      display: block;
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+    }
+
+    .IG_REELS,
+    .IG_REELS_NEWTAB,
+    .IG_REELS_THUMBNAIL,
+    .IG_DWSTORY,
+    .IG_DWSTORY_ALL,
+    .IG_DWNEWTAB,
+    .IG_DWSTORY_THUMBNAIL,
+    .IG_DWHISTORY,
+    .IG_DWHISTORY_ALL,
+    .IG_DWHINEWTAB,
+    .IG_DWHISTORY_THUMBNAIL,
+    .IG_DWPROFILE {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      box-sizing: border-box;
+      color: rgba(255, 255, 255, 0.86) !important;
+      background: var(--insta-loader-bg);
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      -webkit-backdrop-filter: saturate(160%) blur(16px);
+      backdrop-filter: saturate(160%) blur(16px);
+      transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .IG_REELS:hover,
+    .IG_REELS_NEWTAB:hover,
+    .IG_REELS_THUMBNAIL:hover,
+    .IG_DWSTORY:hover,
+    .IG_DWSTORY_ALL:hover,
+    .IG_DWNEWTAB:hover,
+    .IG_DWSTORY_THUMBNAIL:hover,
+    .IG_DWHISTORY:hover,
+    .IG_DWHISTORY_ALL:hover,
+    .IG_DWHINEWTAB:hover,
+    .IG_DWHISTORY_THUMBNAIL:hover,
+    .IG_DWPROFILE:hover {
+      color: #fff;
+      background: rgba(42, 42, 46, 0.94);
+      transform: translateY(-1px);
+    }
+
+    .IG_REELS:active,
+    .IG_REELS_NEWTAB:active,
+    .IG_REELS_THUMBNAIL:active,
+    .IG_DWSTORY:active,
+    .IG_DWSTORY_ALL:active,
+    .IG_DWNEWTAB:active,
+    .IG_DWSTORY_THUMBNAIL:active,
+    .IG_DWHISTORY:active,
+    .IG_DWHISTORY_ALL:active,
+    .IG_DWHINEWTAB:active,
+    .IG_DWHISTORY_THUMBNAIL:active,
+    .IG_DWPROFILE:active {
+      transform: scale(0.94);
+    }
+
+    .IG_REELS svg,
+    .IG_REELS_NEWTAB svg,
+    .IG_REELS_THUMBNAIL svg,
+    .IG_DWSTORY svg,
+    .IG_DWSTORY_ALL svg,
+    .IG_DWNEWTAB svg,
+    .IG_DWSTORY_THUMBNAIL svg,
+    .IG_DWHISTORY svg,
+    .IG_DWHISTORY_ALL svg,
+    .IG_DWHINEWTAB svg,
+    .IG_DWHISTORY_THUMBNAIL svg,
+    .IG_DWPROFILE svg {
+      width: 17px;
+      height: 17px;
+      color: currentColor;
+      fill: none;
+      stroke: currentColor;
+    }
+
+    .IG_DWPROFILE {
+      border-radius: 50%;
+    }
+
+    /* Keep Reels controls out of Safari's dynamic backdrop-filter layers.
+       Instagram repaints this rail when Like state changes. */
+    .IG_REELS,
+    .IG_REELS_NEWTAB,
+    .IG_REELS_THUMBNAIL {
+      background: rgba(24, 24, 27, 0.97);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+
+    .IG_REELS_CONTROLS {
+      display: flex;
+      flex: 0 0 auto;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      margin: 0 0 20px;
+      pointer-events: none;
+    }
+
+    .IG_REELS_CONTROLS > .IG_REELS,
+    .IG_REELS_CONTROLS > .IG_REELS_NEWTAB,
+    .IG_REELS_CONTROLS > .IG_REELS_THUMBNAIL {
+      position: static;
+      top: auto;
+      right: auto;
+      flex: 0 0 auto;
+      pointer-events: auto;
+    }
+
+    .IG_DWSTORY_POSITION,
+    .IG_DWHISTORY_POSITION {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      color: var(--insta-loader-text) !important;
+      background: var(--insta-loader-bg);
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+      -webkit-backdrop-filter: saturate(160%) blur(16px);
+      backdrop-filter: saturate(160%) blur(16px);
+      font-family: var(--insta-loader-font);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: -0.15px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .IG_POPUP_DIG {
+      color-scheme: dark;
+      color: var(--insta-loader-text);
+    }
+
+    .IG_POPUP_DIG.hidden {
+      display: none;
+    }
+
+    .IG_POPUP_DIG_BG {
+      background: rgba(0, 0, 0, 0.68);
+      -webkit-backdrop-filter: saturate(120%) blur(18px);
+      backdrop-filter: saturate(120%) blur(18px);
+    }
+
+    .IG_POPUP_DIG_MAIN {
+      display: flex;
+      flex-direction: column;
+      top: max(24px, 5vh);
+      width: min(680px, calc(100vw - 32px));
+      max-height: min(900px, 90svh);
+      padding: 0;
+      overflow: hidden;
+      color: var(--insta-loader-text);
+      background: linear-gradient(180deg, rgba(31, 31, 34, 0.98), rgba(16, 16, 18, 0.98));
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: var(--insta-loader-radius-large);
+      box-shadow: var(--insta-loader-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .IG_POPUP_DIG_TITLE {
+      position: relative;
+      flex: 0 0 auto;
+      padding: 18px 20px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .insta-loader-dialog-header {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      min-height: 36px;
+      padding-right: 38px;
+    }
+
+    .insta-loader-dialog-brand {
+      overflow: hidden;
+      color: var(--insta-loader-text);
+      font-size: 16px;
+      font-weight: 650;
+      line-height: 20px;
+      letter-spacing: -0.2px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .insta-loader-dialog-shortcut {
+      align-self: center;
+      color: var(--insta-loader-tertiary-text);
+      font-size: 11px;
+      line-height: 18px;
+      white-space: nowrap;
+    }
+
+    .IG_POPUP_DIG #post_info {
+      margin-top: 4px;
+      overflow: hidden;
+      color: var(--insta-loader-secondary-text);
+      font-size: 12px;
+      font-weight: 450;
+      line-height: 16px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .IG_POPUP_DIG #post_info a {
+      color: var(--insta-loader-secondary-text);
+      text-decoration: none;
+    }
+
+    .IG_POPUP_DIG #post_info a:hover {
+      color: var(--insta-loader-text);
+    }
+
+    .IG_POPUP_DIG_BODY {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: none;
+      padding: 14px 18px 18px;
+      box-sizing: border-box;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+    }
+
+    .IG_POPUP_DIG_BODY::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .IG_POPUP_DIG_BODY::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.22);
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background-clip: padding-box;
+    }
+
+    .IG_POPUP_DIG_BTN,
+    #rotate_left,
+    #rotate_right,
+    #iv_close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      box-sizing: border-box;
+      color: var(--insta-loader-secondary-text);
+      background: transparent;
+      border-radius: 9px;
+      transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .IG_POPUP_DIG_BTN:hover,
+    #rotate_left:hover,
+    #rotate_right:hover,
+    #iv_close:hover {
+      color: var(--insta-loader-text);
+      background: var(--insta-loader-surface-hover);
+    }
+
+    .IG_POPUP_DIG_BTN:active,
+    #rotate_left:active,
+    #rotate_right:active,
+    #iv_close:active {
+      transform: scale(0.92);
+    }
+
+    .IG_POPUP_DIG_BTN svg,
+    #rotate_left svg,
+    #rotate_right svg,
+    #iv_close svg {
+      width: 18px;
+      height: 18px;
+      fill: none;
+      stroke: currentColor;
+    }
+
+    .IG_POPUP_DIG button,
+    .IG_POPUP_DIG select,
+    .IG_POPUP_DIG input,
+    .IG_POPUP_DIG textarea {
+      font-family: var(--insta-loader-font);
+    }
+
+    .IG_POPUP_DIG button {
+      min-height: 32px;
+      margin: 0;
+      padding: 6px 12px;
+      color: var(--insta-loader-text);
+      background: var(--insta-loader-surface);
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: var(--insta-loader-radius-small);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 550;
+      line-height: 18px;
+      transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+    }
+
+    .IG_POPUP_DIG button:hover {
+      background: var(--insta-loader-surface-hover);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .IG_POPUP_DIG button:active {
+      background: var(--insta-loader-surface-pressed);
+      transform: scale(0.98);
+    }
+
+    .IG_POPUP_DIG button:focus-visible,
+    .IG_POPUP_DIG select:focus-visible,
+    .IG_POPUP_DIG input:focus-visible,
+    .IG_POPUP_DIG textarea:focus-visible {
+      outline: 2px solid var(--insta-loader-accent);
+      outline-offset: 2px;
+    }
+
+    .IG_POPUP_DIG button:disabled {
+      opacity: 0.42;
+    }
+
+    .IG_POPUP_DIG_TITLE #button_group {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .IG_POPUP_DIG_TITLE #button_group button {
+      flex: 1 1 220px;
+      min-width: 0;
+      white-space: normal;
+    }
+
+    .IG_POPUP_DIG_TITLE #batch_download_selected {
+      color: #fff;
+      background: var(--insta-loader-accent);
+      border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .IG_POPUP_DIG_TITLE #batch_download_selected:hover {
+      background: var(--insta-loader-accent-hover);
+    }
+
+    .IG_POPUP_DIG_TITLE .checkbox {
+      display: flex;
+      align-items: center;
+      min-height: 24px;
+      margin: 10px 0 0;
+      color: var(--insta-loader-secondary-text);
+      font-size: 12px;
+      line-height: 16px;
+    }
+
+    .IG_POPUP_DIG_TITLE .checkbox input {
+      width: 16px;
+      height: 16px;
+      margin: 0 8px 0 0;
+      accent-color: var(--insta-loader-accent);
+      transform: none;
+    }
+
+    .IG_POPUP_DIG_MEDIA .IG_POPUP_DIG_BODY {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      grid-auto-rows: max-content;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .IG_POPUP_DIG_MEDIA .IG_POPUP_DIG_BODY > div {
+      position: relative;
+      min-width: 0;
+      margin: 0;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: var(--insta-loader-radius-medium);
+      transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+    }
+
+    .IG_POPUP_DIG_MEDIA .IG_POPUP_DIG_BODY > div:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.22);
+      transform: translateY(-1px);
+    }
+
+    .IG_POPUP_DIG_MEDIA .IG_POPUP_DIG_BODY a[data-needed="direct"] {
+      display: block;
+      min-height: 170px;
+      padding: 0 0 9px;
+      overflow: hidden;
+      color: var(--insta-loader-secondary-text);
+      border-radius: inherit;
+      font-size: 11px;
+      line-height: 15px;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .IG_POPUP_DIG_MEDIA .IG_POPUP_DIG_BODY a[data-needed="direct"] img {
+      width: 100%;
+      height: 140px;
+      margin-bottom: 8px;
+      object-fit: cover;
+      background: #09090a;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .IG_POPUP_DIG_MEDIA .inner_box_wrapper {
+      left: 8px;
+      top: 8px;
+      width: 24px;
+      height: 24px;
+      z-index: 4;
+      overflow: hidden;
+      background: rgba(15, 15, 17, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      border-radius: 7px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+    }
+
+    .IG_POPUP_DIG_MEDIA .inner_box ~ span {
+      border-radius: 6px;
+    }
+
+    .IG_POPUP_DIG_MEDIA .inner_box:checked ~ span {
+      background: var(--insta-loader-accent);
+    }
+
+    .IG_POPUP_DIG_MEDIA .inner_box ~ span::after {
+      left: 7px;
+      top: 5px;
+      width: 5px;
+      height: 10px;
+      margin: 0;
+      border-color: #fff;
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+
+    .IG_POPUP_DIG_MEDIA .inner_box {
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      transform: none;
     }
 
     .IG_POPUP_DIG_BODY .newTab,
     .IG_POPUP_DIG_BODY .videoThumbnail {
-      background: rgba(32, 32, 32, 0.48);
-      border: 1px solid rgba(255, 255, 255, 0.16);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      right: 8px;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      box-sizing: border-box;
+      color: rgba(255, 255, 255, 0.88);
+      background: rgba(15, 15, 17, 0.74);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+      transition: background 150ms ease, transform 150ms ease;
+    }
+
+    .IG_POPUP_DIG_BODY .newTab {
+      top: 8px;
+    }
+
+    .IG_POPUP_DIG_BODY .videoThumbnail {
+      top: 42px;
     }
 
     .IG_POPUP_DIG_BODY .newTab:hover,
     .IG_POPUP_DIG_BODY .videoThumbnail:hover {
-      background: rgba(48, 48, 48, 0.62);
+      background: rgba(48, 48, 52, 0.9);
+      transform: translateY(-1px);
+    }
+
+    .IG_POPUP_DIG_BODY .newTab svg,
+    .IG_POPUP_DIG_BODY .videoThumbnail svg {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+    }
+
+    #_SNLOAD {
+      grid-column: 1 / -1;
+      display: flex;
+      min-height: 100px;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin: 0;
+      color: var(--insta-loader-secondary-text);
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    #_SNLOAD::before {
+      width: 16px;
+      height: 16px;
+      content: "";
+      border: 1.5px solid rgba(255, 255, 255, 0.2);
+      border-top-color: rgba(255, 255, 255, 0.9);
+      border-radius: 50%;
+      animation: insta-loader-spin 700ms linear infinite;
+    }
+
+    .IG_POPUP_DIG_SETTINGS .IG_POPUP_DIG_MAIN,
+    .IG_POPUP_DIG_HOTKEYS .IG_POPUP_DIG_MAIN {
+      width: min(620px, calc(100vw - 32px));
+    }
+
+    .IG_POPUP_DIG_BODY > .insta-loader-language-row {
+      position: static;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(150px, 210px);
+      align-items: center;
+      gap: 16px;
+      min-height: 48px;
+      margin: 0;
+      padding: 0 12px 10px;
+      color: var(--insta-loader-secondary-text);
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      font-size: 13px;
+    }
+
+    .IG_POPUP_DIG_BODY > .insta-loader-language-row:hover {
+      background: transparent;
+    }
+
+    .insta-loader-language-note {
+      margin-top: 3px;
+      color: var(--insta-loader-tertiary-text);
+      font-size: 11px;
+      line-height: 15px;
+    }
+
+    .IG_POPUP_DIG select,
+    .IG_POPUP_DIG input[type="text"],
+    .IG_POPUP_DIG input[type="number"],
+    .IG_POPUP_DIG input#date_format {
+      min-height: 32px;
+      padding: 5px 30px 5px 9px;
+      box-sizing: border-box;
+      color: var(--insta-loader-text);
+      background: rgba(255, 255, 255, 0.065);
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: 8px;
+      outline: none;
+      font-size: 12px;
+    }
+
+    .globalSettings {
+      display: block;
+      min-height: 46px;
+      margin: 0;
+      padding: 13px 58px 13px 12px;
+      box-sizing: border-box;
+      color: var(--insta-loader-text);
+      background: transparent;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.085);
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 450;
+      line-height: 20px;
+      transition: background 150ms ease;
+    }
+
+    .globalSettings:hover {
+      background: rgba(255, 255, 255, 0.055);
+    }
+
+    .globalSettings.child {
+      width: calc(100% - 22px);
+      margin-left: 22px;
+      color: var(--insta-loader-secondary-text);
+    }
+
+    .globalSettings .chbtn {
+      right: 12px;
+      width: 36px;
+      height: 22px;
+      background: rgba(120, 120, 128, 0.32);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 999px;
+      transition: background 180ms ease, border-color 180ms ease;
+    }
+
+    .globalSettings .chbtn .rounds {
+      left: 1px;
+      top: 1px;
+      width: 18px;
+      height: 18px;
+      background: #f5f5f7;
+      border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.42);
+      transition: left 180ms cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+
+    .globalSettings input:checked ~ .chbtn {
+      background: var(--insta-loader-accent);
+      border-color: transparent;
+    }
+
+    .globalSettings input:checked ~ .chbtn .rounds {
+      left: 15px;
+      background: #fff;
+    }
+
+    .globalSettings #tempWrapper {
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 44px 0 12px;
+      box-sizing: border-box;
+      background: rgba(29, 29, 32, 0.98);
+      border-radius: inherit;
+    }
+
+    .globalSettings input#date_format {
+      top: auto;
+      width: 100%;
+      padding-right: 9px;
+      transform: none;
+    }
+
+    .globalSettings #tempWrapper input[type="range"] {
+      top: auto;
+      flex: 1;
+      width: auto;
+      accent-color: var(--insta-loader-accent);
+      transform: none;
+    }
+
+    .globalSettings #tempWrapper input[type="number"] {
+      top: auto;
+      width: 58px;
+      padding-right: 6px;
+      transform: none;
+    }
+
+    .IG_POPUP_DIG_BODY > .hotkey-settings-container {
+      position: static;
+      display: block;
+      margin: 0;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .IG_POPUP_DIG_BODY > .hotkey-settings-container:hover {
+      background: transparent;
+    }
+
+    .hotkey-setting-item {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding-right: 6px;
+    }
+
+    .hotkey-setting-item > span {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .hotkey-select-wrapper {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .hotkey-preset {
+      min-width: 94px;
+    }
+
+    .hotkey-conflict-warning {
+      position: absolute;
+      left: 12px;
+      bottom: -4px;
+      z-index: 3;
+      display: none;
+      color: var(--insta-loader-danger);
+      font-size: 10px;
+      line-height: 12px;
+      pointer-events: none;
+    }
+
+    .IG_POPUP_DIG_DEBUG textarea {
+      width: 100%;
+      height: min(420px, 52vh);
+      padding: 12px;
+      box-sizing: border-box;
+      resize: vertical;
+      color: #d1f7c4;
+      background: #090b09;
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: var(--insta-loader-radius-medium);
+      outline: none;
+      font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .IG_POPUP_DIG_BODY > .insta-loader-dialog-actions {
+      position: static;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 12px;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+    }
+
+    .IG_POPUP_DIG_BODY > .insta-loader-dialog-actions:hover {
+      background: transparent;
+    }
+
+    .insta-loader-dialog-actions a {
+      display: inline;
+      padding: 0;
+      color: inherit;
+      font: inherit;
+      line-height: inherit;
+      text-decoration: none;
+    }
+
+    #scrollWrapper {
+      z-index: 20;
+    }
+
+    #scrollWrapper .button-up,
+    #scrollWrapper .button-down {
+      width: 34px;
+      height: 34px;
+      margin: 6px 0;
+      box-sizing: border-box;
+      background: rgba(24, 24, 27, 0.97);
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: 11px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      transition: background 150ms ease, transform 150ms ease;
+    }
+
+    #scrollWrapper .button-up:hover,
+    #scrollWrapper .button-down:hover {
+      width: 34px;
+      height: 34px;
+      margin: 6px 0;
+      background: rgba(42, 42, 46, 0.94);
+      border-radius: 11px;
+      transform: translateY(-1px);
+    }
+
+    #scrollWrapper .button-up > div,
+    #scrollWrapper .button-down > div {
+      left: 12px;
+      padding: 3px;
+      border-color: rgba(255, 255, 255, 0.88);
+      border-width: 0 1.5px 1.5px 0;
+    }
+
+    #scrollWrapper .button-up > div {
+      top: 12px;
+    }
+
+    #scrollWrapper .button-down > div {
+      top: 9px;
+    }
+
+    .volume_slider > div {
+      height: 34px;
+      background: var(--insta-loader-bg);
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: 999px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      -webkit-backdrop-filter: saturate(160%) blur(16px);
+      backdrop-filter: saturate(160%) blur(16px);
+    }
+
+    .volume_slider input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px;
+      background: linear-gradient(to right, var(--insta-loader-accent) 0%, var(--insta-loader-accent) var(--ig-track-progress), rgba(255, 255, 255, 0.24) var(--ig-track-progress), rgba(255, 255, 255, 0.24) 100%);
+      border-radius: 999px;
+    }
+
+    .volume_slider input[type="range"]::-moz-range-track {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.24);
+      border-radius: 999px;
+    }
+
+    .volume_slider input[type="range"]::-moz-range-progress {
+      height: 4px;
+      background: var(--insta-loader-accent);
+      border-radius: 999px;
+    }
+
+    .volume_slider input[type="range"]::-webkit-slider-thumb {
+      width: 14px;
+      height: 14px;
+      margin-top: -5px;
+      background: #fff;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.42);
+    }
+
+    .volume_slider input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border: 0;
+      box-shadow: 0 1px 5px rgba(0, 0, 0, 0.42);
+    }
+
+    .circle_wrapper {
+      gap: 8px;
+      min-height: 38px;
+      padding: 7px 12px 7px 9px;
+      box-sizing: border-box;
+      color: var(--insta-loader-text);
+      background: var(--insta-loader-bg);
+      border: 1px solid var(--insta-loader-separator);
+      border-radius: 999px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      backdrop-filter: saturate(180%) blur(20px);
+    }
+
+    .circle_wrapper circle {
+      width: 15px;
+      height: 15px;
+      margin: 0;
+      opacity: 1;
+      border: 1.5px solid rgba(255, 255, 255, 0.2);
+      border-top-color: rgba(255, 255, 255, 0.92);
+      border-radius: 50%;
+      animation: insta-loader-spin 700ms linear infinite;
+    }
+
+    .circle_wrapper span {
+      color: var(--insta-loader-text);
+      font-family: var(--insta-loader-font);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 18px;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.1px;
+    }
+
+    #imageViewer {
+      color-scheme: dark;
+      color: var(--insta-loader-text);
+      background: rgba(0, 0, 0, 0.94);
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+    }
+
+    #imageViewer > #iv_header {
+      height: 56px;
+      padding: 0 18px;
+      box-sizing: border-box;
+      color: var(--insta-loader-text);
+      background: linear-gradient(180deg, rgba(28, 28, 30, 0.94), rgba(18, 18, 20, 0.86));
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      font-family: var(--insta-loader-font);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: -0.1px;
+      -webkit-backdrop-filter: saturate(160%) blur(18px);
+      backdrop-filter: saturate(160%) blur(18px);
+    }
+
+    #iv_header .iv_actions {
+      display: flex;
+      gap: 4px;
+      margin-right: 6px;
+    }
+
+    #iv_header .iv_title {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #rotate_right {
+      transform: scaleX(-1);
+    }
+
+    #rotate_right:active {
+      transform: scaleX(-1) scale(0.92);
+    }
+
+    #iv_close {
+      filter: none;
+    }
+
+    #imageViewer > section {
+      display: flex;
+      width: 100%;
+      height: 100%;
+      padding: 72px 32px 28px;
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    #iv_image {
+      width: auto;
+      height: auto;
+      max-width: calc(100vw - 64px);
+      max-height: calc(100svh - 100px);
+      border-radius: 4px;
+      box-shadow: 0 18px 80px rgba(0, 0, 0, 0.52);
+    }
+
+    @keyframes insta-loader-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes insta-loader-breathe {
+      from { opacity: 0.45; transform: translateY(-1px); }
+      to { opacity: 1; transform: translateY(1px); }
+    }
+
+    @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+      .button_wrapper,
+      .IG_REELS,
+      .IG_REELS_NEWTAB,
+      .IG_REELS_THUMBNAIL,
+      .IG_DWSTORY,
+      .IG_DWSTORY_ALL,
+      .IG_DWNEWTAB,
+      .IG_DWSTORY_THUMBNAIL,
+      .IG_DWHISTORY,
+      .IG_DWHISTORY_ALL,
+      .IG_DWHINEWTAB,
+      .IG_DWHISTORY_THUMBNAIL,
+      .IG_DWPROFILE,
+      .circle_wrapper,
+      #scrollWrapper .button-up,
+      #scrollWrapper .button-down,
+      .volume_slider > div {
+        background: rgba(20, 20, 22, 0.97);
+      }
+    }
+
+    @media (max-width: 560px) {
+      .IG_POPUP_DIG_MAIN {
+        top: 12px;
+        width: calc(100vw - 20px);
+        max-height: calc(100svh - 24px);
+        border-radius: 16px;
+      }
+
+      .IG_POPUP_DIG_TITLE {
+        padding: 14px 14px 12px;
+      }
+
+      .insta-loader-dialog-shortcut {
+        display: none;
+      }
+
+      .IG_POPUP_DIG_BODY {
+        max-height: none;
+        padding: 12px;
+      }
+
+      .IG_POPUP_DIG_MEDIA .IG_POPUP_DIG_BODY {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .IG_POPUP_DIG_BODY > .insta-loader-language-row {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        padding: 0 8px 10px;
+      }
+
+      .hotkey-setting-item {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .hotkey-select-wrapper {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      #imageViewer > section {
+        padding: 68px 12px 12px;
+      }
+
+      #iv_image {
+        max-width: calc(100vw - 24px);
+        max-height: calc(100svh - 80px);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .button_wrapper *,
+      .IG_POPUP_DIG *,
+      #imageViewer *,
+      #scrollWrapper *,
+      .circle_wrapper * {
+        scroll-behavior: auto;
+        transition-duration: 0.01ms;
+      }
+
+      .IG_DW_ALL_MAIN.is-busy svg {
+        animation: none;
+      }
     }
   `;
   const locale_manifest = JSON.parse(GM_getResourceText("LOCALE_MANIFEST"));
@@ -201,6 +1324,7 @@
     currentURL: location.href,
     firstStarted: false,
     pageLoaded: false,
+    bulkDownloadActive: false,
     GL_registerEventList: [],
     GL_logger: [],
     GL_referrer: null,
@@ -1578,6 +2702,7 @@
 
           $(this).on("click", ".IG_IMAGE_VIEWER", async function (e) {
             consumeInjectedClick(e);
+            if (state.bulkDownloadActive) return;
             updateLoadingBar(true);
 
             try {
@@ -1656,6 +2781,7 @@
 
           $(this).on("click", ".IG_THUMBNAIL_MAIN", function (e) {
             consumeInjectedClick(e);
+            if (state.bulkDownloadActive) return;
             updateLoadingBar(true);
 
             state.GL_username = $mainElement.attr("data-username");
@@ -1707,6 +2833,7 @@
 
           $(this).on("click", ".IG_NEWTAB_MAIN", async function (e) {
             consumeInjectedClick(e);
+            if (state.bulkDownloadActive) return;
             updateLoadingBar(true);
 
             try {
@@ -1782,65 +2909,71 @@
           // Running if user click the download all icon
           $(this).on("click", ".IG_DW_ALL_MAIN", async function (e) {
             consumeInjectedClick(e);
-            state.GL_username = $mainElement.attr("data-username");
-            state.GL_postPath =
-              location.pathname.replace(/\/$/, "").split("/").at(-1) ||
-              $mainElement
-                .find('a[href^="/p/"]')
-                .first()
-                .attr("href")
-                .split("/")
-                .at(2) ||
-              $(this)
-                .parent()
-                .parent()
-                .parent()
-                .children("div:last-child")
-                .children("div")
-                .children("div:last-child")
-                .find('a[href^="/p/"]')
-                .last()
-                .attr("href")
-                .split("/")
-                .at(2);
+            const $downloadAllButton = $(this);
+            if (
+              state.bulkDownloadActive ||
+              $downloadAllButton.hasClass("is-busy")
+            ) {
+              return;
+            }
 
-            // Create element that download dailog
-            IG_createDM(USER_SETTING.DIRECT_DOWNLOAD_ALL, true);
+            state.bulkDownloadActive = true;
+            const $bulkMediaScratch = $("<div>");
+            $downloadAllButton
+              .addClass("is-busy")
+              .attr("aria-busy", "true");
 
-            $("#article-id").html(
-              `<a href="https://www.instagram.com/p/${state.GL_postPath}">${state.GL_postPath}</a>`,
-            );
+            try {
+              state.GL_username = $mainElement.attr("data-username");
+              state.GL_postPath =
+                location.pathname.replace(/\/$/, "").split("/").at(-1) ||
+                $mainElement
+                  .find('a[href^="/p/"]')
+                  .first()
+                  .attr("href")
+                  .split("/")
+                  .at(2) ||
+                $downloadAllButton
+                  .parent()
+                  .parent()
+                  .parent()
+                  .children("div:last-child")
+                  .children("div")
+                  .children("div:last-child")
+                  .find('a[href^="/p/"]')
+                  .last()
+                  .attr("href")
+                  .split("/")
+                  .at(2);
 
-            $(".IG_POPUP_DIG .IG_POPUP_DIG_MAIN .IG_POPUP_DIG_BODY a").each(
-              function () {
-                $(this).wrap("<div></div>");
-                $(this).before(
-                  '<label class="inner_box_wrapper"><input class="inner_box" type="checkbox"><span></span></label>',
-                );
-                $(this).after(
-                  `<div data-ih-locale-title="NEW_TAB" title="${_i18n("NEW_TAB")}" class="newTab">${SVG.NEW_TAB}</div>`,
-                );
+              await createMediaListDOM(
+                state.GL_postPath,
+                $bulkMediaScratch,
+                _i18n("LOAD_BLOB_MULTIPLE"),
+              );
 
-                if ($(this).attr("data-name") == "video") {
-                  $(this).after(
-                    `<div data-ih-locale-title="VIDEO_THUMBNAIL" title="${_i18n("VIDEO_THUMBNAIL")}" class="videoThumbnail">${SVG.THUMBNAIL}</div>`,
-                  );
-                }
-              },
-            );
+              const $mediaLinks = getMediaListLinks($bulkMediaScratch);
+              if ($mediaLinks.length === 0) {
+                throw new Error("No downloadable media found for this post.");
+              }
 
-            await createMediaListDOM(
-              state.GL_postPath,
-              MEDIA_LIST_SELECTOR,
-              _i18n("LOAD_BLOB_MULTIPLE"),
-            );
-            await batchDownloadPostFiles(getMediaListLinks());
-            removeMediaDialog();
+              await batchDownloadPostFiles($mediaLinks);
+            } catch (err) {
+              console.error("Failed to download all post media:", err);
+              alert("Cannot find downloadable media for this post.");
+            } finally {
+              $bulkMediaScratch.empty();
+              state.bulkDownloadActive = false;
+              $downloadAllButton
+                .removeClass("is-busy")
+                .removeAttr("aria-busy");
+            }
           });
 
           // Running if user click the download icon
           $(this).on("click", ".IG_DW_MAIN", async function (e) {
             consumeInjectedClick(e);
+            if (state.bulkDownloadActive) return;
             state.GL_username = $mainElement.attr("data-username");
             state.GL_postPath =
               location.pathname.replace(/\/$/, "").split("/").at(-1) ||
@@ -2109,14 +3242,15 @@
    * @description Create a list of media elements from post URLs.
    *
    * @param  {String}  postURL
-   * @param  {String}  selector - Use CSS element selectors to choose where it appears.
+   * @param  {String|jQuery}  selector - CSS selector or container receiving the media list.
    * @param  {String}  message - i18n display loading message
    * @return {void}
    */
   async function createMediaListDOM(postURL, selector, message) {
     try {
-      $(`${selector} a`).remove();
-      $(selector).append('<p id="_SNLOAD">' + message + "</p>");
+      const $container = $(selector);
+      $container.find("a").remove();
+      $container.append('<p id="_SNLOAD">' + message + "</p>");
       let result = await getBlobMedia(postURL);
       let resource = filterResourceData(result.data);
 
@@ -2125,7 +3259,7 @@
 
         // GraphVideo
         if (resource.__typename == "GraphVideo" && resource.video_url) {
-          $(selector).append(
+          $container.append(
             `<a media-id="${resource.id}" datetime="${resource.taken_at_timestamp}" data-blob="true" data-needed="direct" data-path="${resource.shortcode}" data-name="video" data-type="mp4" data-username="${resource.owner.username}" data-globalIndex="${idx}" href="javascript:;" data-href="${resource.video_url}"><img width="100" src="${resource.display_resources[1].src}" /><br/>- <span data-ih-locale="VID">${_i18n("VID")}</span> ${idx} -</a>`,
           );
           idx++;
@@ -2136,7 +3270,7 @@
         }
         // GraphImage
         if (resource.__typename == "GraphImage") {
-          $(selector).append(
+          $container.append(
             `<a media-id="${resource.id}" datetime="${resource.taken_at_timestamp}" data-blob="true" data-needed="direct" data-path="${resource.shortcode}" data-name="photo" data-type="jpg" data-username="${resource.owner.username}" data-globalIndex="${idx}" href="javascript:;" data-href="${resource.display_resources[resource.display_resources.length - 1].src}"><img width="100" src="${resource.display_resources[1].src}" /><br/>- <span data-ih-locale="IMG">${_i18n("IMG")}</span> ${idx} -</a>`,
           );
           idx++;
@@ -2148,7 +3282,7 @@
         ) {
           for (let e of resource.edge_sidecar_to_children.edges) {
             if (e.node.__typename == "GraphVideo") {
-              $(selector).append(
+              $container.append(
                 `<a media-id="${e.node.id}" datetime="${resource.taken_at_timestamp}" data-blob="true" data-needed="direct" data-path="${resource.shortcode}" data-name="video" data-type="mp4" data-username="${resource.owner.username}" data-globalIndex="${idx}" href="javascript:;" data-href="${e.node.video_url}"><img width="100" src="${e.node.display_resources[1].src}" /><br/>- <span data-ih-locale-title="VID">${_i18n("VID")}</span> ${idx} -</a>`,
               );
               if (e.node.video_dash_manifest) {
@@ -2157,7 +3291,7 @@
             }
 
             if (e.node.__typename == "GraphImage") {
-              $(selector).append(
+              $container.append(
                 `<a media-id="${e.node.id}" datetime="${resource.taken_at_timestamp}" data-blob="true" data-needed="direct" data-path="${resource.shortcode}" data-name="photo" data-type="jpg" data-username="${resource.owner.username}" data-globalIndex="${idx}" href="javascript:;" data-href="${e.node.display_resources[e.node.display_resources.length - 1].src}"><img width="100" src="${e.node.display_resources[1].src}" /><br/>- <span data-ih-locale="IMG">${_i18n("IMG")}</span> ${idx} -</a>`,
               );
             }
@@ -2187,13 +3321,13 @@
                 return 0;
               });
 
-              $(selector).append(
+              $container.append(
                 `<a media-id="${mda.pk}" datetime="${mda.taken_at}" data-blob="true" data-needed="direct" data-path="${resource.code}" data-name="photo" data-type="jpg" data-username="${resource.owner.username}" data-globalIndex="${idx}" href="javascript:;" data-href="${mda.image_versions2.candidates[0].url}"><img width="100" src="${mda.image_versions2.candidates[0].url}" /><br/>- <span data-ih-locale="IMG">${_i18n("IMG")}</span> ${idx} -</a>`,
               );
             }
             // Video
             else {
-              $(selector).append(
+              $container.append(
                 `<a media-id="${mda.pk}" datetime="${mda.taken_at}" data-blob="true" data-needed="direct" data-path="${resource.code}" data-name="video" data-type="mp4" data-username="${resource.owner.username}" data-globalIndex="${idx}" href="javascript:;" data-href="${mda.video_versions[0].url}"><img width="100" src="${mda.image_versions2.candidates[0].url}" /><br/>- <span data-ih-locale="VID">${_i18n("VID")}</span> ${idx} -</a>`,
               );
               if (mda.video_dash_manifest) {
@@ -2220,7 +3354,7 @@
               return 0;
             });
 
-            $(selector).append(
+            $container.append(
               `<a media-id="${resource.pk}" datetime="${resource.taken_at}" data-blob="true" data-needed="direct" data-path="${resource.code}" data-name="photo" data-type="jpg" data-username="${resource.owner.username}" data-globalIndex="${idx}" href="javascript:;" data-href="${resource.image_versions2.candidates[0].url}"><img width="100" src="${resource.image_versions2.candidates[0].url}" /><br/>- <span data-ih-locale="IMG">${_i18n("IMG")}</span> ${idx} -</a>`,
             );
           }
@@ -2229,39 +3363,39 @@
             if (resource.video_dash_manifest) {
               state.GL_mediaDataCache[resource.pk] = resource;
             }
-            $(selector).append(
+            $container.append(
               `<a media-id="${resource.pk}" datetime="${resource.taken_at}" data-blob="true" data-needed="direct" data-path="${resource.code}" data-name="video" data-type="mp4" data-username="${resource.owner.username}" data-globalIndex="${idx}" href="javascript:;" data-href="${resource.video_versions[0].url}"><img width="100" src="${resource.image_versions2.candidates[0].url}" /><br/>- <span data-ih-locale="VID">${_i18n("VID")}</span> ${idx} -</a>`,
             );
           }
         }
       }
 
-      $("#_SNLOAD").remove();
-      $(".IG_POPUP_DIG .IG_POPUP_DIG_MAIN .IG_POPUP_DIG_BODY a").each(
-        function () {
-          $(this).wrap("<div></div>");
-          $(this).before(
-            '<label class="inner_box_wrapper"><input class="inner_box" type="checkbox"><span></span></label>',
-          );
-          $(this).after(
-            `<div data-ih-locale-title="NEW_TAB" title="${_i18n("NEW_TAB")}" class="newTab">${SVG.NEW_TAB}</div>`,
-          );
+      $container.find("#_SNLOAD").remove();
+      $container.find('a[data-needed="direct"]').each(function () {
+        $(this).wrap("<div></div>");
+        $(this).before(
+          '<label class="inner_box_wrapper"><input class="inner_box" type="checkbox"><span></span></label>',
+        );
+        $(this).after(
+          `<div data-ih-locale-title="NEW_TAB" title="${_i18n("NEW_TAB")}" class="newTab">${SVG.NEW_TAB}</div>`,
+        );
 
-          if ($(this).attr("data-name") == "video") {
-            $(this).after(
-              `<div data-ih-locale-title="VIDEO_THUMBNAIL" title="${_i18n("VIDEO_THUMBNAIL")}" class="videoThumbnail">${SVG.THUMBNAIL}</div>`,
-            );
-          }
-        },
-      );
-      updatePopupSelectionSummary();
+        if ($(this).attr("data-name") == "video") {
+          $(this).after(
+            `<div data-ih-locale-title="VIDEO_THUMBNAIL" title="${_i18n("VIDEO_THUMBNAIL")}" class="videoThumbnail">${SVG.THUMBNAIL}</div>`,
+          );
+        }
+      });
+      if ($container.closest(".IG_POPUP_DIG").length > 0) {
+        updatePopupSelectionSummary();
+      }
     } catch (err) {
       logger("createMediaListDOM", err);
     }
   }
 
-  function getMediaListLinks() {
-    return $(`${MEDIA_LIST_SELECTOR} a[data-needed="direct"]`);
+  function getMediaListLinks(selector = MEDIA_LIST_SELECTOR) {
+    return $(selector).find('a[data-needed="direct"]');
   }
 
   function getMediaListLinkByIndex(index) {
@@ -2681,39 +3815,42 @@
             clearInterval(timer);
 
             if (USER_SETTING.SCROLL_BUTTON) {
-              $("#scrollWrapper").remove();
-              $('section > main[role="main"]').append(
-                '<section id="scrollWrapper"></section>',
-              );
-              $('section > main[role="main"] > #scrollWrapper').append(
-                '<div class="button-up"><div></div></div>',
-              );
-              $('section > main[role="main"] > #scrollWrapper').append(
-                '<div class="button-down"><div></div></div>',
-              );
+              const $reelsMain = $('section > main[role="main"]');
+              let $scrollWrapper = $reelsMain.children("#scrollWrapper");
 
-              $('section > main[role="main"] > #scrollWrapper > .button-up').on(
-                "click",
-                function () {
-                  $('section > main[role="main"] > div')[0].scrollBy({
-                    top: -30,
-                    behavior: "smooth",
-                  });
-                },
-              );
-              $(
-                'section > main[role="main"] > #scrollWrapper > .button-down',
-              ).on("click", function () {
-                $('section > main[role="main"] > div')[0].scrollBy({
-                  top: 30,
+              if (!$scrollWrapper.length) {
+                $scrollWrapper = $(
+                  '<section id="scrollWrapper"><div class="button-up"><div></div></div><div class="button-down"><div></div></div></section>',
+                );
+                $reelsMain.append($scrollWrapper);
+              }
+
+              const scrollReelsBy = function (top) {
+                const scrollContainer = $reelsMain.children("div")[0];
+                scrollContainer?.scrollBy({
+                  top,
                   behavior: "smooth",
                 });
-              });
+              };
+
+              $scrollWrapper
+                .find(".button-up")
+                .off("click.IG_reelsScroll")
+                .on("click.IG_reelsScroll", function () {
+                  scrollReelsBy(-30);
+                });
+              $scrollWrapper
+                .find(".button-down")
+                .off("click.IG_reelsScroll")
+                .on("click.IG_reelsScroll", function () {
+                  scrollReelsBy(30);
+                });
+            } else {
+              $("#scrollWrapper").remove();
             }
 
-            // reels scroll has [tabindex] but header not.
-            // ? Old selector: section > main[role="main"] > div[tabindex], section > main[role="main"] > div[class]
-            // ! Co-author: sn-o-w
+            // Reels playback uses an adaptive MediaSource stream. Let Safari
+            // render its first frame before measuring and modifying the rail.
             $("div[aria-busy][tabindex]")
               .children("div")
               .each(function () {
@@ -2723,7 +3860,7 @@
                   $(this).height() > window.innerHeight * 0.8 &&
                   $(this).find("video").length > 0
                 ) {
-                  appendReelsButton($(this));
+                  scheduleReelsButton($(this));
                 }
               });
           }
@@ -2734,25 +3871,90 @@
     }
   }
 
-  function appendReelsButton($main) {
-    if (!$main.children().find(".IG_REELS").length) {
-      $main.children().css("position", "relative");
+  function scheduleReelsButton($main) {
+    if (
+      $main.find(".IG_REELS_CONTROLS").length ||
+      $main.data("insta-loader-reels-controls-pending")
+    ) {
+      return;
+    }
 
-      $main
-        .children()
-        .append(
-          `<div data-ih-locale-title="DW" title="${_i18n("DW")}" class="IG_REELS">${SVG.DOWNLOAD}</div>`,
-        );
-      $main
-        .children()
-        .append(
-          `<div data-ih-locale-title="NEW_TAB" title="${_i18n("NEW_TAB")}" class="IG_REELS_NEWTAB">${SVG.NEW_TAB}</div>`,
-        );
-      $main
-        .children()
-        .append(
-          `<div data-ih-locale-title="VIDEO_THUMBNAIL" title="${_i18n("VIDEO_THUMBNAIL")}" class="IG_REELS_THUMBNAIL">${SVG.THUMBNAIL}</div>`,
-        );
+    $main.data("insta-loader-reels-controls-pending", true);
+
+    let installQueued = false;
+    const queueInstall = function () {
+      if (installQueued) return;
+      installQueued = true;
+
+      const install = function () {
+        $main.removeData("insta-loader-reels-controls-pending");
+        if ($main[0]?.isConnected) appendReelsButton($main);
+      };
+
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(install, { timeout: 1000 });
+      } else {
+        setTimeout(install, IS_SAFARI ? 250 : 0);
+      }
+    };
+
+    const video = $main.find("video").first()[0];
+    const queueAfterPlaybackStart = function () {
+      setTimeout(queueInstall, IS_SAFARI ? 1000 : 0);
+    };
+
+    if (typeof video?.requestVideoFrameCallback === "function") {
+      video.requestVideoFrameCallback(queueAfterPlaybackStart);
+      setTimeout(queueInstall, IS_SAFARI ? 2000 : 1200);
+    } else if (video && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      video.addEventListener("loadeddata", queueAfterPlaybackStart, {
+        once: true,
+      });
+      setTimeout(queueInstall, IS_SAFARI ? 2000 : 1200);
+    } else {
+      queueAfterPlaybackStart();
+    }
+  }
+
+  function appendReelsButton($main) {
+    if (!$main.find(".IG_REELS_CONTROLS").length) {
+      const $actionRail = $main
+        .find("div")
+        .filter(function () {
+          const $children = $(this).children();
+          const directActionGroups = $children.filter(function () {
+            return $(this).find('[role="button"] svg[aria-label]').length > 0;
+          }).length;
+
+          // Avoid forcing layout for every descendant in a Reel. Only the
+          // small set of action-group candidates needs geometry inspection.
+          if (directActionGroups < 3) return false;
+
+          const rect = this.getBoundingClientRect();
+          const computedStyle = window.getComputedStyle(this);
+
+          return (
+            computedStyle.display === "flex" &&
+            computedStyle.flexDirection === "column" &&
+            rect.width > 0 &&
+            rect.width <= 120 &&
+            rect.height >= 180
+          );
+        })
+        .first();
+
+      if (!$actionRail.length) {
+        logger("Unable to locate the Reels action rail");
+        return;
+      }
+
+      $actionRail.prepend(
+        `<div class="IG_REELS_CONTROLS" data-insta-loader-controls="reels">
+          <div data-ih-locale-title="DW" title="${_i18n("DW")}" class="IG_REELS">${SVG.DOWNLOAD}</div>
+          <div data-ih-locale-title="NEW_TAB" title="${_i18n("NEW_TAB")}" class="IG_REELS_NEWTAB">${SVG.NEW_TAB}</div>
+          <div data-ih-locale-title="VIDEO_THUMBNAIL" title="${_i18n("VIDEO_THUMBNAIL")}" class="IG_REELS_THUMBNAIL">${SVG.THUMBNAIL}</div>
+        </div>`,
+      );
 
       $main.find("video").each(function () {
         $(this)
@@ -6253,20 +7455,21 @@
    * @param  {Boolean}  hasCheckbox
    * @return {void}
    */
-  function IG_createDM(hasHidden, hasCheckbox) {
-    let isHidden = hasHidden ? "hidden" : "";
+  function IG_createDM(hasHidden = false, hasCheckbox = false) {
+    const dialogClasses = ["IG_POPUP_DIG"];
+    if (hasHidden) dialogClasses.push("hidden");
+    if (hasCheckbox) dialogClasses.push("IG_POPUP_DIG_MEDIA");
+
     $("body").append(
-      '<div class="IG_POPUP_DIG ' +
-        isHidden +
-        '"><div class="IG_POPUP_DIG_BG"></div><div class="IG_POPUP_DIG_MAIN"><div class="IG_POPUP_DIG_TITLE"></div><div class="IG_POPUP_DIG_BODY"></div></div></div>',
+      `<div class="${dialogClasses.join(" ")}"><div class="IG_POPUP_DIG_BG"></div><div class="IG_POPUP_DIG_MAIN"><div class="IG_POPUP_DIG_TITLE"></div><div class="IG_POPUP_DIG_BODY"></div></div></div>`,
     );
     $(".IG_POPUP_DIG .IG_POPUP_DIG_MAIN .IG_POPUP_DIG_TITLE").append(
-      `<div style="position:relative;min-height:36px;text-align:center;margin-bottom: 7px;"><div style="position:absolute;left:0px;line-height: 18px;"><kbd>${getPlatformModifierKey()}</kbd>+<kbd>Q</kbd> [<span data-ih-locale="CLOSE">${_i18n("CLOSE")}</span>]</div><div style="line-height: 18px;">${SCRIPT_NAME} ${GM_info.script.version}</div><div id="post_info" style="line-height: 14px;font-size:14px;">Post ID: <span id="article-id"></span></div><div class="IG_POPUP_DIG_BTN">${SVG.CLOSE}</div></div>`,
+      `<div class="insta-loader-dialog-header"><div><div class="insta-loader-dialog-brand">${SCRIPT_NAME} <span>${GM_info.script.version}</span></div><div id="post_info">Post ID: <span id="article-id"></span></div></div><div class="insta-loader-dialog-shortcut"><kbd>${getPlatformModifierKey()}</kbd>+<kbd>Q</kbd> <span data-ih-locale="CLOSE">${_i18n("CLOSE")}</span></div><div class="IG_POPUP_DIG_BTN">${SVG.CLOSE}</div></div>`,
     );
 
     if (hasCheckbox) {
       $(".IG_POPUP_DIG .IG_POPUP_DIG_MAIN .IG_POPUP_DIG_TITLE").append(
-        `<div style="text-align: center;" id="button_group"></div>`,
+        '<div id="button_group"></div>',
       );
       $(
         ".IG_POPUP_DIG .IG_POPUP_DIG_MAIN .IG_POPUP_DIG_TITLE > div#button_group",
@@ -6401,6 +7604,7 @@
   function showHotkeySetting() {
     $(".IG_POPUP_DIG").remove();
     IG_createDM();
+    $(".IG_POPUP_DIG").addClass("IG_POPUP_DIG_HOTKEYS");
 
     $(".IG_POPUP_DIG #post_info").text("Hotkey Settings");
 
@@ -6474,10 +7678,10 @@
     ) {
       const currentKeyCode = state[stateKey];
       const $container = $(`
-                <label class="globalSettings hotkey-setting-item" data-hotkey="${name}" style="position: relative;display: flex; align-items: center; padding-right: 5px;">
+                <label class="globalSettings hotkey-setting-item" data-hotkey="${name}">
                     <span>${_i18n(key)}</span>
-                    <div class="hotkey-select-wrapper" style="display: flex; align-items: center; gap: 8px; justify-content: flex-end; flex: 1;">
-                        <select class="hotkey-preset" data-storage="${storageKey}" data-state="${stateKey}" data-default="${defaultKeyCode}" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px;">
+                    <div class="hotkey-select-wrapper">
+                        <select class="hotkey-preset" data-storage="${storageKey}" data-state="${stateKey}" data-default="${defaultKeyCode}">
                             ${hotkeyOptions
                               .filter(
                                 (o) => o.value != defaultKeyCode.toString(),
@@ -6489,9 +7693,9 @@
                               .join("")}
                             <option value="${defaultKeyCode}" ${currentKeyCode == defaultKeyCode ? "selected" : ""}>Alt+${String.fromCharCode(defaultKeyCode)}</option>
                         </select>
-                        <button class="hotkey-reset" title="${_i18n("HOTKEY_RESET")}" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 13px; color: #1f1f1f; background: #fff; cursor: pointer;">${_i18n("HOTKEY_RESET")}</button>
+                        <button type="button" class="hotkey-reset" title="${_i18n("HOTKEY_RESET")}">${_i18n("HOTKEY_RESET")}</button>
                     </div>
-                    <div class="hotkey-conflict-warning" style="pointer-events: none; position: absolute; bottom: -10px; display: none; font-size: 11px; color: #e74c3c;">▲ ${_i18n("HOTKEY_CONFLICT_WARNING")}</div>
+                    <div class="hotkey-conflict-warning">▲ ${_i18n("HOTKEY_CONFLICT_WARNING")}</div>
                 </label>
             `);
 
@@ -6536,7 +7740,7 @@
     }
 
     $body.append(
-      '<span style="display: block; margin-bottom: 15px;" class="hotkey-settings-container"></span>',
+      '<div class="hotkey-settings-container"></div>',
     );
 
     hotkeyConfigs.forEach((config) => {
@@ -6563,22 +7767,25 @@
   function showSetting() {
     $(".IG_POPUP_DIG").remove();
     IG_createDM();
+    $(".IG_POPUP_DIG").addClass("IG_POPUP_DIG_SETTINGS");
 
     $(".IG_POPUP_DIG #post_info").text("Preference Settings");
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_TITLE > div").append(`
-                <select id="langSelect"></select>
-                <div style="font-size: 12px;">
-                    Some texts are machine-translated and may be inaccurate; translation contributions are welcome on GitHub.
-                </div>
-            `);
+    const $body = $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY");
+    $body.append(`
+      <div class="insta-loader-language-row">
+        <div>
+          <div>Language</div>
+          <div class="insta-loader-language-note">Some text is machine-translated; translation contributions are welcome on GitHub.</div>
+        </div>
+        <select id="langSelect"></select>
+      </div>
+    `);
 
     for (const o in locale_manifest) {
       $("#langSelect").append(
         `<option value="${o}" ${state.lang === o ? "selected" : ""}>${locale_manifest[o]}</option>`,
       );
     }
-
-    const $body = $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY");
 
     for (const name in USER_SETTING) {
       $body.append(`
@@ -6671,28 +7878,29 @@
   function showDebugDOM() {
     $(".IG_POPUP_DIG").remove();
     IG_createDM();
+    $(".IG_POPUP_DIG").addClass("IG_POPUP_DIG_DEBUG");
     $(".IG_POPUP_DIG #post_info").text("IG Debug DOM Tree");
 
     $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY").append(
-      `<textarea style="font-family: monospace;width:100%;box-sizing: border-box;height:300px;background: transparent;" readonly></textarea>`,
+      "<textarea readonly></textarea>",
     );
     $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY").append(
-      `<span style="display:block;text-align:center;">`,
+      '<div class="insta-loader-dialog-actions"></div>',
     );
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY span").append(
-      `<button style="margin: 3px;" class="IG_DISPLAY_DOM_TREE"><a>${_i18n("SHOW_DOM_TREE")}</a></button>`,
+    $(".IG_POPUP_DIG .insta-loader-dialog-actions").append(
+      `<button type="button" class="IG_DISPLAY_DOM_TREE"><a>${_i18n("SHOW_DOM_TREE")}</a></button>`,
     );
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY span").append(
-      `<button style="margin: 3px;" class="IG_SELECT_DOM_TREE"><a>${_i18n("SELECT_AND_COPY")}</a></button>`,
+    $(".IG_POPUP_DIG .insta-loader-dialog-actions").append(
+      `<button type="button" class="IG_SELECT_DOM_TREE"><a>${_i18n("SELECT_AND_COPY")}</a></button>`,
     );
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY span").append(
-      `<button style="margin: 3px;" class="IG_DOWNLOAD_DOM_TREE"><a>${_i18n("DOWNLOAD_DOM_TREE")}</a></button><br/>`,
+    $(".IG_POPUP_DIG .insta-loader-dialog-actions").append(
+      `<button type="button" class="IG_DOWNLOAD_DOM_TREE"><a>${_i18n("DOWNLOAD_DOM_TREE")}</a></button>`,
     );
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY span").append(
-      `<button style="margin: 3px;" class="IG_REPORT_GITHUB"><a href="https://github.com/paytonison/insta-loader/issues" target="_blank">${_i18n("REPORT_GITHUB")}</a></button>`,
+    $(".IG_POPUP_DIG .insta-loader-dialog-actions").append(
+      `<button type="button" class="IG_REPORT_GITHUB"><a href="https://github.com/paytonison/insta-loader/issues" target="_blank">${_i18n("REPORT_GITHUB")}</a></button>`,
     );
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY span").append(
-      `<button style="margin: 3px;" class="IG_REPORT_DISCORD"><a href="https://discord.gg/q3KT4hdq8x" target="_blank">${_i18n("REPORT_DISCORD")}</a></button>`,
+    $(".IG_POPUP_DIG .insta-loader-dialog-actions").append(
+      `<button type="button" class="IG_REPORT_DISCORD"><a href="https://discord.gg/q3KT4hdq8x" target="_blank">${_i18n("REPORT_DISCORD")}</a></button>`,
     );
   }
 
@@ -6705,19 +7913,20 @@
   function showFeedbackDOM() {
     $(".IG_POPUP_DIG").remove();
     IG_createDM();
+    $(".IG_POPUP_DIG").addClass("IG_POPUP_DIG_FEEDBACK");
     $(".IG_POPUP_DIG #post_info").text("Feedback Options");
 
     $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY").append(
-      `<span style="display:block;text-align:center;">`,
+      '<div class="insta-loader-dialog-actions"></div>',
     );
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY span").append(
-      `<button style="margin: 3px;" class="IG_REPORT_FORK"><a href="https://github.com/paytonison/insta-loader/issues" target="_blank">${_i18n("REPORT_FORK")}</a></button>`,
+    $(".IG_POPUP_DIG .insta-loader-dialog-actions").append(
+      `<button type="button" class="IG_REPORT_FORK"><a href="https://github.com/paytonison/insta-loader/issues" target="_blank">${_i18n("REPORT_FORK")}</a></button>`,
     );
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY span").append(
-      `<button style="margin: 3px;" class="IG_REPORT_GITHUB"><a href="https://github.com/paytonison/insta-loader/issues" target="_blank">${_i18n("REPORT_GITHUB")}</a></button>`,
+    $(".IG_POPUP_DIG .insta-loader-dialog-actions").append(
+      `<button type="button" class="IG_REPORT_GITHUB"><a href="https://github.com/paytonison/insta-loader/issues" target="_blank">${_i18n("REPORT_GITHUB")}</a></button>`,
     );
-    $(".IG_POPUP_DIG .IG_POPUP_DIG_BODY span").append(
-      `<button style="margin: 3px;" class="IG_REPORT_DISCORD"><a href="https://discord.gg/q3KT4hdq8x" target="_blank">${_i18n("REPORT_DISCORD")}</a></button>`,
+    $(".IG_POPUP_DIG .insta-loader-dialog-actions").append(
+      `<button type="button" class="IG_REPORT_DISCORD"><a href="https://discord.gg/q3KT4hdq8x" target="_blank">${_i18n("REPORT_DISCORD")}</a></button>`,
     );
   }
 
@@ -6729,10 +7938,10 @@
     $("body").append(
       `<div id="imageViewer">
         <div id="iv_header">
-            <div style="flex:1;">Image Viewer</div>
-            <div style="display: flex;filter: invert(1);gap: 8px;margin-right: 8px;">
-                <div id="rotate_left" style="cursor: pointer;">${SVG.TURN_DEG}</div>
-                <div id="rotate_right" style="transform: scaleX(-1);cursor: pointer;">${SVG.TURN_DEG}</div>
+            <div class="iv_title">Image Viewer</div>
+            <div class="iv_actions">
+                <div id="rotate_left">${SVG.TURN_DEG}</div>
+                <div id="rotate_right">${SVG.TURN_DEG}</div>
             </div>
             <div id="iv_close">${SVG.CLOSE}</div>
         </div>
@@ -7762,7 +8971,7 @@
       },
     );
 
-    $("body").on("change", ".IG_POPUP_DIG_TITLE #langSelect", function () {
+    $("body").on("change", ".IG_POPUP_DIG_BODY #langSelect", function () {
       GM_setValue("UI_LANGUAGE", $(this).val());
       state.lang = $(this).val();
       translationTextCache = null;
