@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v1.2.2
+// @version            v1.2.3
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -1023,12 +1023,12 @@
       height: 34px;
       margin: 6px 0;
       box-sizing: border-box;
-      background: var(--insta-loader-bg);
+      background: rgba(24, 24, 27, 0.97);
       border: 1px solid var(--insta-loader-separator);
       border-radius: 11px;
       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
-      -webkit-backdrop-filter: saturate(160%) blur(16px);
-      backdrop-filter: saturate(160%) blur(16px);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
       transition: background 150ms ease, transform 150ms ease;
     }
 
@@ -3815,39 +3815,42 @@
             clearInterval(timer);
 
             if (USER_SETTING.SCROLL_BUTTON) {
-              $("#scrollWrapper").remove();
-              $('section > main[role="main"]').append(
-                '<section id="scrollWrapper"></section>',
-              );
-              $('section > main[role="main"] > #scrollWrapper').append(
-                '<div class="button-up"><div></div></div>',
-              );
-              $('section > main[role="main"] > #scrollWrapper').append(
-                '<div class="button-down"><div></div></div>',
-              );
+              const $reelsMain = $('section > main[role="main"]');
+              let $scrollWrapper = $reelsMain.children("#scrollWrapper");
 
-              $('section > main[role="main"] > #scrollWrapper > .button-up').on(
-                "click",
-                function () {
-                  $('section > main[role="main"] > div')[0].scrollBy({
-                    top: -30,
-                    behavior: "smooth",
-                  });
-                },
-              );
-              $(
-                'section > main[role="main"] > #scrollWrapper > .button-down',
-              ).on("click", function () {
-                $('section > main[role="main"] > div')[0].scrollBy({
-                  top: 30,
+              if (!$scrollWrapper.length) {
+                $scrollWrapper = $(
+                  '<section id="scrollWrapper"><div class="button-up"><div></div></div><div class="button-down"><div></div></div></section>',
+                );
+                $reelsMain.append($scrollWrapper);
+              }
+
+              const scrollReelsBy = function (top) {
+                const scrollContainer = $reelsMain.children("div")[0];
+                scrollContainer?.scrollBy({
+                  top,
                   behavior: "smooth",
                 });
-              });
+              };
+
+              $scrollWrapper
+                .find(".button-up")
+                .off("click.IG_reelsScroll")
+                .on("click.IG_reelsScroll", function () {
+                  scrollReelsBy(-30);
+                });
+              $scrollWrapper
+                .find(".button-down")
+                .off("click.IG_reelsScroll")
+                .on("click.IG_reelsScroll", function () {
+                  scrollReelsBy(30);
+                });
+            } else {
+              $("#scrollWrapper").remove();
             }
 
-            // reels scroll has [tabindex] but header not.
-            // ? Old selector: section > main[role="main"] > div[tabindex], section > main[role="main"] > div[class]
-            // ! Co-author: sn-o-w
+            // Reels playback uses an adaptive MediaSource stream. Let Safari
+            // render its first frame before measuring and modifying the rail.
             $("div[aria-busy][tabindex]")
               .children("div")
               .each(function () {
@@ -3857,7 +3860,7 @@
                   $(this).height() > window.innerHeight * 0.8 &&
                   $(this).find("video").length > 0
                 ) {
-                  appendReelsButton($(this));
+                  scheduleReelsButton($(this));
                 }
               });
           }
@@ -3868,26 +3871,74 @@
     }
   }
 
+  function scheduleReelsButton($main) {
+    if (
+      $main.find(".IG_REELS_CONTROLS").length ||
+      $main.data("insta-loader-reels-controls-pending")
+    ) {
+      return;
+    }
+
+    $main.data("insta-loader-reels-controls-pending", true);
+
+    let installQueued = false;
+    const queueInstall = function () {
+      if (installQueued) return;
+      installQueued = true;
+
+      const install = function () {
+        $main.removeData("insta-loader-reels-controls-pending");
+        if ($main[0]?.isConnected) appendReelsButton($main);
+      };
+
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(install, { timeout: 1000 });
+      } else {
+        setTimeout(install, IS_SAFARI ? 250 : 0);
+      }
+    };
+
+    const video = $main.find("video").first()[0];
+    const queueAfterPlaybackStart = function () {
+      setTimeout(queueInstall, IS_SAFARI ? 1000 : 0);
+    };
+
+    if (typeof video?.requestVideoFrameCallback === "function") {
+      video.requestVideoFrameCallback(queueAfterPlaybackStart);
+      setTimeout(queueInstall, IS_SAFARI ? 2000 : 1200);
+    } else if (video && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      video.addEventListener("loadeddata", queueAfterPlaybackStart, {
+        once: true,
+      });
+      setTimeout(queueInstall, IS_SAFARI ? 2000 : 1200);
+    } else {
+      queueAfterPlaybackStart();
+    }
+  }
+
   function appendReelsButton($main) {
     if (!$main.find(".IG_REELS_CONTROLS").length) {
       const $actionRail = $main
         .find("div")
         .filter(function () {
+          const $children = $(this).children();
+          const directActionGroups = $children.filter(function () {
+            return $(this).find('[role="button"] svg[aria-label]').length > 0;
+          }).length;
+
+          // Avoid forcing layout for every descendant in a Reel. Only the
+          // small set of action-group candidates needs geometry inspection.
+          if (directActionGroups < 3) return false;
+
           const rect = this.getBoundingClientRect();
           const computedStyle = window.getComputedStyle(this);
-          const directActionGroups = $(this)
-            .children()
-            .filter(function () {
-              return $(this).find('[role="button"] svg[aria-label]').length > 0;
-            }).length;
 
           return (
             computedStyle.display === "flex" &&
             computedStyle.flexDirection === "column" &&
             rect.width > 0 &&
             rect.width <= 120 &&
-            rect.height >= 180 &&
-            directActionGroups >= 3
+            rect.height >= 180
           );
         })
         .first();
