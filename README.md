@@ -115,10 +115,11 @@ Important settings include:
   fall back when the Media API is throttled or unavailable.
 - **Capture Image Resource Using Media Cache**: watch image resource loads and
   cache high-quality URLs for later actions.
-- **Play Reels at Maximum Quality** (enabled by default): briefly hold the
-  active Reel's poster while selecting Instagram's highest-resolution complete
-  progressive MP4 with audio. If that source cannot be loaded within five
-  seconds, continue with Instagram's native playback.
+- **Play Standalone Reels at Maximum Quality** (enabled by default): on singular
+  `/reel/{shortcode}/` pages, briefly hold the Reel's poster while selecting
+  Instagram's highest-resolution complete progressive MP4 with audio. If that
+  source cannot be loaded within five seconds, continue with Instagram's native
+  playback. The scrolling `/reels/` feed always keeps Instagram's native player.
 - **Modify Resource EXIF Properties**: for supported image blobs, rewrite EXIF
   metadata with useful post information.
 - **Display HTML5 Video Controller**, **Disable Video Auto-looping**, and
@@ -132,11 +133,14 @@ filename template. Right-click **Modify Video Volume** to set the stored volume.
 
 ### Maximum-quality Reel playback
 
-This setting applies only when the active Reel starts playing; it does not
-prefetch the next Reel. The script makes an additional request to Instagram's
-private metadata endpoint, so it can use more bandwidth and may encounter rate
-limits. Throttling, metadata failures, unsupported sources, and timeouts fail
-open to Instagram's native playback.
+This setting applies only to stable singular `/reel/{shortcode}/` pages when the
+active Reel starts playing; it does not prefetch the next Reel. The scrolling
+`/reels/` feed deliberately remains native because Instagram recycles its video
+elements there, and replacing a recycled player's source can leave a later Reel
+showing or pausing the preceding one. The script makes an additional request to
+Instagram's private metadata endpoint only on eligible standalone pages, so it
+can use more bandwidth and may encounter rate limits. Throttling, metadata
+failures, unsupported sources, and timeouts fail open to native playback.
 
 Here, "maximum quality" means the highest-resolution complete progressive MP4
 that Instagram reports for the Reel, with both video and audio in one file. It

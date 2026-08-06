@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v1.3.0
+// @version            v1.3.1
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -1405,6 +1405,7 @@
       observedVideos: new WeakSet(),
       pendingNativeResume: null,
       rebindHistory: new Map(),
+      routeHref: location.href,
       scanQueued: false,
       videoState: new WeakMap(),
     },
@@ -1464,6 +1465,8 @@
   // Main Timer
   // eslint-disable-next-line no-unused-vars
   var timer = setInterval(function () {
+    syncMaximumReelPlaybackRoute();
+
     // @run-at document-start is needed for Reel playback interception, but the
     // existing page UI initializer still requires a body.
     if (!document.body) return;
@@ -3795,6 +3798,9 @@
     const reelQuality = state.GL_reelQuality;
 
     document.addEventListener("play", handleMaximumReelPlay, true);
+    window.addEventListener("popstate", function () {
+      queueMicrotask(syncMaximumReelPlaybackRoute);
+    });
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "hidden") {
         const operation = reelQuality.activeOperation;
@@ -3811,6 +3817,25 @@
     if (typeof IntersectionObserver === "function") {
       reelQuality.intersectionObserver = new IntersectionObserver(
         function (entries) {
+          if (isMaximumReelFeedRoute(location.href)) {
+            entries.forEach(function (entry) {
+              if (!entry.isIntersecting || entry.intersectionRatio < 0.5) return;
+
+              const previous = reelQuality.videoState.get(entry.target);
+              if (
+                previous &&
+                (previous.phase === "ready" ||
+                  previous.candidateBound ||
+                  reelQuality.activeOperation === previous)
+              ) {
+                relinquishMaximumReelPlayback(
+                  previous,
+                  "managed-player-entered-feed",
+                );
+              }
+            });
+          }
+
           const operation = reelQuality.activeOperation;
           if (!operation || operation.finished) return;
 
@@ -3838,6 +3863,8 @@
     }
 
     reelQuality.mutationObserver = new MutationObserver(function (mutations) {
+      syncMaximumReelPlaybackRoute();
+
       let removedOperation = null;
       for (const mutation of mutations) {
         mutation.addedNodes.forEach(function (node) {
@@ -3878,6 +3905,45 @@
     observeMaximumReelVideos(document);
     requestAnimationFrame(scanForPlayingReels);
     setTimeout(scanForPlayingReels, 500);
+  }
+
+  /**
+   * syncMaximumReelPlaybackRoute
+   * @description Relinquish any player owned by a standalone Reel operation
+   * before Instagram can recycle it into the scrolling Reels feed.
+   *
+   * @return {Boolean}
+   */
+  function syncMaximumReelPlaybackRoute() {
+    const reelQuality = state.GL_reelQuality;
+    if (reelQuality.routeHref === location.href) return false;
+
+    reelQuality.routeHref = location.href;
+    const operation = reelQuality.activeOperation;
+    if (
+      operation &&
+      !isMaximumReelPlaybackRouteEligible(
+        operation.video,
+        operation.shortcode,
+      )
+    ) {
+      relinquishMaximumReelPlayback(operation, "playback-route-changed");
+    }
+
+    document.querySelectorAll("video").forEach(function (video) {
+      const previous = reelQuality.videoState.get(video);
+      if (
+        previous?.phase === "ready" &&
+        !isMaximumReelPlaybackRouteEligible(video, previous.shortcode)
+      ) {
+        relinquishMaximumReelPlayback(previous, "ready-player-route-changed");
+      }
+    });
+
+    if (getMaximumReelPlaybackRouteShortcode(location.href)) {
+      requestAnimationFrame(scanForPlayingReels);
+    }
+    return true;
   }
 
   /**
@@ -3931,11 +3997,13 @@
     const candidates = [];
     document.querySelectorAll("video").forEach(function (video) {
       observeMaximumReelVideos(video);
+      const shortcode = getReelShortcodeForVideo(video);
       if (
         !video.paused &&
         !video.ended &&
         isActiveReelVideo(video) &&
-        getReelShortcodeForVideo(video)
+        shortcode &&
+        isMaximumReelPlaybackRouteEligible(video, shortcode)
       ) {
         candidates.push(video);
       }
@@ -4000,12 +4068,23 @@
       return;
     }
 
-    const shortcode = getReelShortcodeForVideo(video);
-    if (!shortcode || !isActiveReelVideo(video)) return;
-
-    const now = Date.now();
     const reelQuality = state.GL_reelQuality;
     const previous = reelQuality.videoState.get(video);
+    const shortcode = getReelShortcodeForVideo(video);
+    if (!shortcode || !isActiveReelVideo(video)) return;
+    if (!isMaximumReelPlaybackRouteEligible(video, shortcode)) {
+      if (
+        previous &&
+        (previous.phase === "ready" ||
+          previous.candidateBound ||
+          reelQuality.activeOperation === previous)
+      ) {
+        relinquishMaximumReelPlayback(previous, "managed-player-entered-feed");
+      }
+      return;
+    }
+
+    const now = Date.now();
 
     if (
       previous?.nativeResumeOnce &&
@@ -4194,6 +4273,10 @@
       }
       if (reason === "video_reused") {
         abandonMaximumReelPlayback(operation, reason);
+        return;
+      }
+      if (reason === "ineligible_route") {
+        relinquishMaximumReelPlayback(operation, reason);
         return;
       }
       if (err?.rateLimited) {
@@ -4796,6 +4879,96 @@
   }
 
   /**
+   * relinquishMaximumReelPlayback
+   * @description Invalidate a standalone operation without restoring its stale
+   * native snapshot when Instagram navigates to a recycled Reels feed player.
+   *
+   * @param {Object} operation
+   * @param {String} reason
+   * @return {void}
+   */
+  function relinquishMaximumReelPlayback(operation, reason) {
+    if (!operation || operation.relinquished) return;
+
+    operation.relinquished = true;
+    operation.finished = true;
+    operation.phase = "native";
+    if (operation.hardTimeout) clearTimeout(operation.hardTimeout);
+    operation.pendingWaitCancel?.();
+    operation.pendingWaitCancel = null;
+    abortMaximumReelMetadataRequest(operation);
+    cleanupMaximumReelHold(operation);
+
+    const video = operation.video;
+    const ownsProgressiveSource =
+      operation.candidateBound &&
+      operation.selectedUrl &&
+      maximumReelSourceMatches(video, operation.selectedUrl);
+    let releasedSource = false;
+
+    if (ownsProgressiveSource) {
+      try {
+        video.pause();
+        video.removeAttribute("src");
+        if ("srcObject" in video) video.srcObject = null;
+        operation.snapshot.sourceElements.forEach(function (source) {
+          if (source.element.parentElement === video) {
+            source.element.removeAttribute("src");
+          }
+        });
+        video.load();
+        releasedSource = true;
+      } catch (err) {
+        logger(
+          "[Reel Quality] Managed source release deferred to Instagram",
+          err?.name || "source_release_failure",
+        );
+      }
+    } else if (operation.destructive) {
+      restoreMaximumReelPlaybackProperties(video, operation.snapshot);
+    }
+
+    delete video.dataset.instaLoaderReelQuality;
+    const reelQuality = state.GL_reelQuality;
+    reelQuality.videoState.delete(video);
+    if (reelQuality.activeOperation === operation) {
+      reelQuality.activeOperation = null;
+    }
+
+    logger("[Reel Quality] Relinquished standalone player", reason, {
+      releasedSource,
+    });
+
+    if (
+      operation.wantsPlayback &&
+      video.isConnected &&
+      isMaximumReelFeedRoute(location.href)
+    ) {
+      const resumeNativeFeed = function () {
+        if (
+          !video.isConnected ||
+          !isMaximumReelFeedRoute(location.href) ||
+          !isActiveReelVideo(video) ||
+          (releasedSource &&
+            maximumReelSourceMatches(video, operation.selectedUrl))
+        ) {
+          return;
+        }
+
+        Promise.resolve(video.play()).catch(function () {
+          // Instagram may not have rebound the recycled native source yet.
+        });
+      };
+
+      requestAnimationFrame(resumeNativeFeed);
+      if (releasedSource) {
+        setTimeout(resumeNativeFeed, 100);
+        setTimeout(resumeNativeFeed, 350);
+      }
+    }
+  }
+
+  /**
    * resumeMaximumReelCurrentSource
    * @description Respect a new source installed by Instagram during the handoff.
    * The old source snapshot is deliberately not restored.
@@ -5285,6 +5458,74 @@
   }
 
   /**
+   * getMaximumReelPlaybackRouteShortcode
+   * @description Return a shortcode only for stable singular /reel/ pages.
+   * Plural /reels/ routes use Instagram's recycled native feed players.
+   *
+   * @param {String} value
+   * @return {String|null}
+   */
+  function getMaximumReelPlaybackRouteShortcode(value) {
+    const shortcode = parseMaximumReelShortcode(value, true);
+    if (!shortcode) return null;
+
+    let url;
+    try {
+      url = new URL(value, location.origin);
+    } catch (_err) {
+      return null;
+    }
+
+    const segments = url.pathname.split("/").filter(Boolean);
+    const directStandalone =
+      segments[0]?.toLowerCase() === "reel" &&
+      (segments.length === 2 ||
+        (segments.length === 3 && segments[2].toLowerCase() === "embed"));
+    const usernameStandalone =
+      segments.length === 3 &&
+      /^[A-Za-z0-9._]+$/.test(segments[0]) &&
+      segments[1]?.toLowerCase() === "reel";
+
+    return directStandalone || usernameStandalone ? shortcode : null;
+  }
+
+  /**
+   * isMaximumReelPlaybackRouteEligible
+   * @description Require both the video identity and the stable standalone route
+   * to agree before any automatic metadata request or player mutation.
+   *
+   * @param {HTMLVideoElement} video
+   * @param {String} shortcode
+   * @return {Boolean}
+   */
+  function isMaximumReelPlaybackRouteEligible(video, shortcode) {
+    const routeShortcode = getMaximumReelPlaybackRouteShortcode(location.href);
+    return (
+      Boolean(routeShortcode) &&
+      routeShortcode === shortcode &&
+      getReelShortcodeForVideo(video) === shortcode
+    );
+  }
+
+  /** @return {Boolean} */
+  function isMaximumReelFeedRoute(value) {
+    let url;
+    try {
+      url = new URL(value, location.origin);
+    } catch (_err) {
+      return false;
+    }
+
+    const segments = url.pathname.split("/").filter(Boolean);
+    return (
+      segments[0]?.toLowerCase() === "reels" ||
+      (segments.length >= 2 &&
+        /^[A-Za-z0-9._]+$/.test(segments[0]) &&
+        segments[1]?.toLowerCase() === "reels")
+    );
+  }
+
+  /**
    * isActiveReelVideo
    * @description Synchronously require a substantially visible, connected player.
    *
@@ -5365,6 +5606,17 @@
       throw createMaximumReelError(
         "operation_cancelled",
         "The Reel quality operation is no longer current.",
+      );
+    }
+    if (
+      !isMaximumReelPlaybackRouteEligible(
+        operation.video,
+        operation.shortcode,
+      )
+    ) {
+      throw createMaximumReelError(
+        "ineligible_route",
+        "Maximum-quality playback is limited to standalone Reel pages.",
       );
     }
     if (
@@ -10239,7 +10491,8 @@
           "Modify Renamed File Timestamp Date Format (Right-Click to Set)",
         DISABLE_VIDEO_LOOPING: "Disable Video Auto-looping",
         HTML5_VIDEO_CONTROL: "Display HTML5 Video Controller",
-        MAX_REEL_PLAYBACK_QUALITY: "Play Reels at Maximum Quality",
+        MAX_REEL_PLAYBACK_QUALITY:
+          "Play Standalone Reels at Maximum Quality",
         REDIRECT_CLICK_USER_STORY_PICTURE:
           "Redirect When Clicking on User's Story Picture",
         FORCE_FETCH_ALL_RESOURCES: "Force Fetch All Resources in the Post",
@@ -10294,7 +10547,7 @@
         HTML5_VIDEO_CONTROL_INTRO:
           "Display the HTML5 video controller in video resource.\n\nThis will hide the custom video volume slider and replace it with the HTML5 controller. The HTML5 controller can be hidden by right-clicking on the video to reveal the original details.",
         MAX_REEL_PLAYBACK_QUALITY_INTRO:
-          "Hold the active Reel's poster for up to five seconds while loading the highest-resolution complete progressive MP4 reported by Instagram. This uses more bandwidth and a private metadata request. Native playback resumes if the request is throttled, fails, times out, or Safari rejects the source. DASH downloads are separate and may provide a higher-resolution saved file.",
+          "On standalone /reel/ pages, hold the active Reel's poster for up to five seconds while loading the highest-resolution complete progressive MP4 reported by Instagram. The scrolling /reels/ feed stays on Instagram's native player because it recycles video elements. This uses more bandwidth and a private metadata request. Native playback resumes if the request is throttled, fails, times out, or Safari rejects the source. DASH downloads are separate and may provide a higher-resolution saved file.",
         REDIRECT_CLICK_USER_STORY_PICTURE_INTRO:
           "Redirect to a user's profile page when right-clicking on their avatar in the story area on the homepage.\nIf you use the middle mouse button to click, it will open in a new tab.",
         FORCE_FETCH_ALL_RESOURCES_INTRO:
