@@ -7,8 +7,7 @@ through the userscript manager.
 
 This fork is maintained for practical Safari use, but the script metadata also
 declares support for current Chrome, Edge, and Firefox builds. It is based on
-SN-Koarashi's IG Helper. See [License](#license) for the repository's unresolved
-license-file mismatch.
+SN-Koarashi's IG Helper and is distributed under `GPL-3.0-only`.
 
 ## What it does
 
@@ -367,8 +366,6 @@ commit cookies, credentials, private responses, or captured private media.
 
 ## License
 
-The installable userscript metadata and `package.json` declare
-`GPL-3.0-only`. The repository's root `LICENSE` file currently contains the
-Apache License 2.0. These declarations conflict; treat the repository's
-licensing status as unresolved until the license file and metadata are
-intentionally reconciled.
+`insta-loader` is distributed under `GPL-3.0-only`, matching the upstream IG
+Helper license and the declarations in the installable userscript and
+`package.json`. See [LICENSE](LICENSE) for the full terms.
