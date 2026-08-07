@@ -7,7 +7,7 @@ through the userscript manager.
 
 This fork is maintained for practical Safari use, but the script metadata also
 declares support for current Chrome, Edge, and Firefox builds. It is based on
-SN-Koarashi's IG Helper and keeps the original GPL-3.0-only license.
+SN-Koarashi's IG Helper and is distributed under `GPL-3.0-only`.
 
 ## What it does
 
@@ -17,8 +17,10 @@ main controls are:
 
 - **Download**: download the current visible photo or video.
 - **Download All Resources**: collect every item in a carousel, story sequence,
-  or highlight sequence and download them in a throttled batch without opening
-  the media picker.
+  or highlight sequence. The dedicated post control skips the media picker and
+  uses browser-sensitive download batches. Story and highlight controls skip
+  the picker only when **Directly Download All Resources in the
+  Story/Highlight** is enabled; otherwise they open the picker.
 - **Open in New Tab**: open the resolved media URL directly, which is useful
   when you want to inspect the file before saving it.
 - **Download Video Thumbnail**: save the still image associated with a video.
@@ -55,6 +57,9 @@ uses several strategies, depending on the page and settings:
   usable photo URL.
 - Calls Instagram's GraphQL or media endpoints to resolve a post, carousel,
   Reel, story, highlight, or avatar into its underlying resources.
+- On Story and Highlight routes in Safari, retries affected Instagram JSON
+  requests with an authenticated page-context fetch when Safari rejects the
+  userscript request transport by policy.
 - Uses `GM_download` when the userscript manager provides it.
 - Falls back to fetching media as a blob and triggering a browser download when
   direct `GM_download` is unavailable or fails.
@@ -66,9 +71,10 @@ uses several strategies, depending on the page and settings:
   into one MP4 with Mediabunny; if muxing fails, it falls back to separate
   stream downloads.
 
-Safari gets more conservative timings by default: media detection runs slightly
-slower, batch downloads use smaller groups, and object URLs are kept alive long
-enough for Safari's download handoff.
+Safari uses slower media-detection intervals and smaller, more widely spaced
+download groups. Across all supported browsers, generated object URLs are kept
+alive for 60 seconds; that shared delay also gives Safari enough time to finish
+its download handoff.
 
 ## Installation
 
@@ -86,7 +92,9 @@ The userscript metadata uses the same raw GitHub URL for `@downloadURL` and
 Automatic install and update from that URL only work when the userscript file is
 publicly accessible. If this repository is private, install or update the script
 manually, or make the repository public before distributing it through the raw
-GitHub URL.
+GitHub URL. The raw `main` URL always serves the latest merged release; to test
+an unmerged branch, build that checkout and install its root
+`insta-loader.user.js` manually.
 
 ## Settings
 
@@ -115,11 +123,13 @@ Important settings include:
   fall back when the Media API is throttled or unavailable.
 - **Capture Image Resource Using Media Cache**: watch image resource loads and
   cache high-quality URLs for later actions.
-- **Play Standalone Reels at Maximum Quality** (enabled by default): on singular
-  `/reel/{shortcode}/` pages, briefly hold the Reel's poster while selecting
-  Instagram's highest-resolution complete progressive MP4 with audio. If that
-  source cannot be loaded within five seconds, continue with Instagram's native
-  playback. The scrolling `/reels/` feed always keeps Instagram's native player.
+- **Play Standalone Reels at Maximum Quality** (enabled by default): on eligible
+  singular Reel routes (`/reel/{shortcode}/`, `/reel/{shortcode}/embed/`, and
+  `/{username}/reel/{shortcode}/`), briefly hold the Reel's poster while
+  selecting Instagram's highest-resolution complete progressive MP4 with audio.
+  If that source cannot be loaded within five seconds, continue with Instagram's
+  native playback. The scrolling `/reels/` feed always keeps Instagram's native
+  player.
 - **Modify Resource EXIF Properties**: for supported image blobs, rewrite EXIF
   metadata with useful post information.
 - **Display HTML5 Video Controller**, **Disable Video Auto-looping**, and
@@ -139,14 +149,16 @@ filename template. Right-click **Modify Video Volume** to set the stored volume.
 
 ### Maximum-quality Reel playback
 
-This setting applies only to stable singular `/reel/{shortcode}/` pages when the
-active Reel starts playing; it does not prefetch the next Reel. The scrolling
-`/reels/` feed deliberately remains native because Instagram recycles its video
-elements there, and replacing a recycled player's source can leave a later Reel
-showing or pausing the preceding one. The script makes an additional request to
-Instagram's private metadata endpoint only on eligible standalone pages, so it
-can use more bandwidth and may encounter rate limits. Throttling, metadata
-failures, unsupported sources, and timeouts fail open to native playback.
+This setting applies only to stable singular Reel routes: `/reel/{shortcode}/`,
+its `/embed/` form, and username-qualified `/{username}/reel/{shortcode}/`
+routes. It starts when the active Reel plays and does not prefetch the next Reel.
+The scrolling `/reels/` feed deliberately remains native because Instagram
+recycles its video elements there, and replacing a recycled player's source can
+leave a later Reel showing or pausing the preceding one. The script makes an
+additional request to Instagram's private metadata endpoint only on eligible
+standalone pages, so it can use more bandwidth and may encounter rate limits.
+Throttling, metadata failures, unsupported sources, and timeouts fail open to
+native playback.
 
 Here, "maximum quality" means the highest-resolution complete progressive MP4
 that Instagram reports for the Reel, with both video and audio in one file. It
@@ -202,8 +214,9 @@ from the **Hotkey Settings** menu. `Alt+Q` and `Alt+R` are fixed.
 
 The script requests userscript permissions for style injection, storage, menu
 commands, notifications, downloads, tab opening, and cross-origin requests. It
-connects to Instagram CDN/API hosts, `raw.githubusercontent.com`, and
-`cdn.jsdelivr.net`.
+connects to `www.instagram.com`, `i.instagram.com`, Instagram and Meta CDN hosts
+(`*.cdninstagram.com`, `scontent.cdninstagram.com`, and `*.fbcdn.net`),
+`raw.githubusercontent.com`, and `cdn.jsdelivr.net`.
 
 Runtime dependencies and resources are provided as follows:
 
@@ -350,3 +363,9 @@ authenticated Safari/Tampermonkey smoke test. Before publishing a generated
 Do not publish based only on syntax, Vitest, or Playwright results. Record any
 part of the authenticated Safari matrix that could not be exercised, and do not
 commit cookies, credentials, private responses, or captured private media.
+
+## License
+
+`insta-loader` is distributed under `GPL-3.0-only`, matching the upstream IG
+Helper license and the declarations in the installable userscript and
+`package.json`. See [LICENSE](LICENSE) for the full terms.

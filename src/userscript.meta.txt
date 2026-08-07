@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v1.3.2
+// @version            v1.3.3
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -53,6 +53,7 @@
 // @connect            i.instagram.com
 // @connect            raw.githubusercontent.com
 // @connect            scontent.cdninstagram.com
+// @connect            www.instagram.com
 // @require            https://cdn.jsdelivr.net/npm/mediabunny@1.34.5/dist/bundles/mediabunny.min.cjs#sha256-wUFR+x2bDvpqgMAVGy2CvGvULyjTGvGy4UUAm8rae5U=
 // @require            https://code.jquery.com/jquery-3.7.1.min.js#sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=
 // @supportURL         https://github.com/paytonison/insta-loader/

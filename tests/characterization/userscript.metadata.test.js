@@ -22,12 +22,25 @@ describe("committed userscript metadata", () => {
 
   it("keeps the install and update contract", () => {
     expect(metadataValues("name")).toEqual(["insta-loader"]);
+    expect(metadataValues("version")).toEqual(["v1.3.3"]);
     expect(metadataValues("match")).toEqual(["https://*.instagram.com/*"]);
     expect(metadataValues("run-at")).toEqual(["document-start"]);
     expect(metadataValues("downloadURL")).toEqual([
       "https://raw.githubusercontent.com/paytonison/insta-loader/main/insta-loader.user.js",
     ]);
     expect(metadataValues("updateURL")).toEqual(metadataValues("downloadURL"));
+  });
+
+  it("allows privileged requests to the exact Instagram API hosts", () => {
+    expect(metadataValues("connect")).toEqual([
+      "cdn.jsdelivr.net",
+      "*.cdninstagram.com",
+      "*.fbcdn.net",
+      "i.instagram.com",
+      "raw.githubusercontent.com",
+      "scontent.cdninstagram.com",
+      "www.instagram.com",
+    ]);
   });
 
   it("keeps the pinned runtime dependencies", () => {
