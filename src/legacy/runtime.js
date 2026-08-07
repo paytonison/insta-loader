@@ -5458,6 +5458,19 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     const postShortCode = postPath;
     const getURL = `https://www.instagram.com/graphql/query/?query_hash=2c4c2e343a8f64c625ba02b2aa12c7f8&variables=%7B%22shortcode%22:%22${postShortCode}%22}`;
 
+    const requestWithQueryId = (reason) => {
+      logger(
+        "Request with:",
+        "getBlobMediaWithQueryID()",
+        postShortCode,
+        reason,
+      );
+      return getBlobMediaWithQueryID(postShortCode).then((data) => ({
+        type: "query_id",
+        data,
+      }));
+    };
+
     return jsonRequest({
       url: getURL,
       detectApiErrors: false,
@@ -5465,23 +5478,32 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         "User-Agent":
           "Mozilla/5.0 (Linux; Android 10; Pixel 7 XL)Build/RP1A.20845.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/5.0 Chrome/117.0.5938.60 Mobile Safari/537.36 Instagram 307.0.0.34.111",
       },
-    })
-      .then((obj) => {
+    }).then(
+      (obj) => {
         logger(obj);
-        if (obj.status !== "fail") {
+        const resource = obj?.data?.shortcode_media;
+        if (
+          resource != null &&
+          typeof resource === "object" &&
+          !Array.isArray(resource)
+        ) {
           return { type: "query_hash", data: obj.data };
         }
 
-        logger("Request with:", "getBlobMediaWithQuery()", postShortCode);
-        return getBlobMediaWithQueryID(postShortCode).then((res) => ({
-          type: "query_id",
-          data: res.xdt_api__v1__media__shortcode__web_info.items[0],
-        }));
-      })
-      .catch((err) => {
-        logger("getBlobMedia()", "reject", err.message || err);
-        throw err;
-      });
+        return requestWithQueryId(
+          obj?.status === "fail"
+            ? obj?.message || "legacy-query-failed"
+            : "legacy-query-returned-no-media",
+        );
+      },
+      (err) => {
+        logger("getBlobMedia()", "legacy query rejected", err.message || err);
+        if (err?.category === "abort" || err?.name === "AbortError") {
+          throw err;
+        }
+        return requestWithQueryId(err?.message || "legacy-query-rejected");
+      },
+    );
   }
 
   /**

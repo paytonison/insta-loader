@@ -17,6 +17,12 @@ const legacyPostResponse = JSON.parse(
     "utf8",
   ),
 );
+const queryIdResponse = JSON.parse(
+  readFileSync(
+    new URL("../fixtures/json/query-id.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 const runtimes = [];
 let currentUserscriptSource;
@@ -65,6 +71,24 @@ async function mountPostControls(app) {
   app.clock.runIntervalsOnce();
   app.clock.runDue(50);
   await app.flushMicrotasks();
+}
+
+function click(app, element) {
+  element.dispatchEvent(
+    new app.window.MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function directDownloadStorage() {
+  return {
+    DIRECT_DOWNLOAD_ALL: false,
+    DIRECT_DOWNLOAD_VISIBLE_RESOURCE: true,
+    FORCE_RESOURCE_VIA_MEDIA: false,
+    PREFER_DASH_MANIFEST: false,
+  };
 }
 
 describe("post control fallback without IntersectionObserver", () => {
@@ -137,5 +161,117 @@ describe("post control fallback without IntersectionObserver", () => {
     expect(app.window.jQuery._data(post, "events")?.click || []).toHaveLength(0);
     expect(post.hasAttribute("data-snig")).toBe(false);
     expect(app.document.querySelectorAll(".button_wrapper")).toHaveLength(0);
+  });
+
+  it("falls back to query-ID metadata when the legacy query has no post", async () => {
+    const app = await createUserscriptRuntime({
+      html: postControlsHtml,
+      missingApis: ["IntersectionObserver"],
+      network: [
+        {
+          match: "query_hash=2c4c2e343a8f64c625ba02b2aa12c7f8",
+          response: {
+            body: { data: { shortcode_media: null }, status: "ok" },
+          },
+        },
+        {
+          match: "query_id=9496392173716084",
+          response: { body: queryIdResponse },
+        },
+      ],
+      storage: directDownloadStorage(),
+      url: "https://www.instagram.com/p/Post12345/",
+      userscriptSource: currentUserscriptSource,
+    });
+    runtimes.push(app);
+
+    await mountPostControls(app);
+    click(app, app.document.querySelector(".IG_DW_MAIN"));
+    await app.flushMicrotasks(30);
+
+    const queryIdRequest = app.requests.find((request) =>
+      request.url.includes("query_id=9496392173716084"),
+    );
+    const variables = JSON.parse(
+      new URL(queryIdRequest.url).searchParams.get("variables"),
+    );
+
+    expect(variables.shortcode).toBe("Post12345");
+    expect(app.alerts).toEqual([]);
+    expect(app.downloads).toHaveLength(1);
+    expect(app.downloads[0].url).toBe(
+      "https://scontent.cdninstagram.com/reel-1080.mp4",
+    );
+  });
+
+  it("falls back to query-ID metadata when the legacy request is rejected", async () => {
+    const app = await createUserscriptRuntime({
+      html: postControlsHtml,
+      missingApis: ["IntersectionObserver"],
+      network: [
+        {
+          match: "query_hash=2c4c2e343a8f64c625ba02b2aa12c7f8",
+          response: {
+            error: { message: "legacy endpoint unavailable" },
+            event: "error",
+          },
+        },
+        {
+          match: "query_id=9496392173716084",
+          response: { body: queryIdResponse },
+        },
+      ],
+      storage: directDownloadStorage(),
+      url: "https://www.instagram.com/p/Post12345/",
+      userscriptSource: currentUserscriptSource,
+    });
+    runtimes.push(app);
+
+    await mountPostControls(app);
+    click(app, app.document.querySelector(".IG_DW_MAIN"));
+    await app.flushMicrotasks(30);
+
+    expect(
+      app.requests.filter((request) =>
+        request.url.includes("query_id=9496392173716084"),
+      ),
+    ).toHaveLength(1);
+    expect(app.alerts).toEqual([]);
+    expect(app.downloads).toHaveLength(1);
+    expect(app.downloads[0].url).toBe(
+      "https://scontent.cdninstagram.com/reel-1080.mp4",
+    );
+  });
+
+  it("does not start query-ID recovery after the legacy request is aborted", async () => {
+    const app = await createUserscriptRuntime({
+      html: postControlsHtml,
+      missingApis: ["IntersectionObserver"],
+      network: [
+        {
+          match: "query_hash=2c4c2e343a8f64c625ba02b2aa12c7f8",
+          response: { event: "abort" },
+        },
+        {
+          match: "query_id=9496392173716084",
+          response: { body: queryIdResponse },
+        },
+      ],
+      storage: directDownloadStorage(),
+      url: "https://www.instagram.com/p/Post12345/",
+      userscriptSource: currentUserscriptSource,
+    });
+    runtimes.push(app);
+
+    await mountPostControls(app);
+    click(app, app.document.querySelector(".IG_DW_MAIN"));
+    await app.flushMicrotasks(30);
+
+    expect(
+      app.requests.filter((request) =>
+        request.url.includes("query_id=9496392173716084"),
+      ),
+    ).toHaveLength(0);
+    expect(app.downloads).toHaveLength(0);
   });
 });
