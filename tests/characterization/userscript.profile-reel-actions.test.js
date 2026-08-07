@@ -337,6 +337,7 @@ describe("ordinary Reel MediaDescriptor action integration", () => {
     expect(app.downloads[0].url).toBe(
       "https://cdn.example.test/api-reel-first.mp4",
     );
+    expect(app.alerts).toEqual([]);
   });
 
   it("retains the legacy missing-owner alert and declines the action", async () => {

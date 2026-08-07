@@ -12826,17 +12826,6 @@
         }
       });
     }
-    function filterResourceData(data) {
-      const resource = data.shortcode_media ?? data;
-      if (resource.owner == null && resource.user != null) {
-        resource.owner = resource.user;
-      }
-      if (resource.owner == null) {
-        logger("carousel_media:", "undefined username");
-        alert("carousel_media: undefined username");
-      }
-      return resource;
-    }
     function renderMediaDescriptor($container, descriptor) {
       const isVideo = descriptor.kind === "video";
       const anchor = media.renderMediaRow(document, descriptor, _i18n);
@@ -13055,7 +13044,6 @@
           updateLoadingBar(true);
           let reelsPath = location.href.split("?").at(0).split("instagram.com/reels/").at(-1).replaceAll("/", "");
           let result = await getBlobMedia(reelsPath);
-          filterResourceData(result.data);
           const descriptor = media.normalizeReelMedia(result, {
             isVideo,
             shortcode: reelsPath
@@ -13064,6 +13052,8 @@
             throw new Error("Cannot find Reel media resource.");
           }
           if (!descriptor.owner) {
+            logger("carousel_media:", "undefined username");
+            alert("carousel_media: undefined username");
             throw new Error("Cannot find Reel media owner.");
           }
           const intent = isPreview ? media.MEDIA_INTENT.PREVIEW : isVideo ? media.MEDIA_INTENT.DOWNLOAD : media.MEDIA_INTENT.THUMBNAIL;

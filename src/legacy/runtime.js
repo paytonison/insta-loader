@@ -4559,27 +4559,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
   }
 
   /**
-   * Preserve the raw response shape for legacy feature adapters that have not
-   * yet migrated to MediaDescriptor records.
-   *
-   * @param {Object} data
-   * @return {Object}
-   */
-  function filterResourceData(data) {
-    const resource = data.shortcode_media ?? data;
-    if (resource.owner == null && resource.user != null) {
-      resource.owner = resource.user;
-    }
-
-    if (resource.owner == null) {
-      logger("carousel_media:", "undefined username");
-      alert("carousel_media: undefined username");
-    }
-
-    return resource;
-  }
-
-  /**
    * Render one normalized media row while retaining the established DOM
    * attributes for delegated handlers and third-party styling.
    *
@@ -4947,9 +4926,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           .at(-1)
           .replaceAll("/", "");
         let result = await getBlobMedia(reelsPath);
-        // Retain the legacy missing-owner alert and user-to-owner fallback
-        // while MediaDescriptor becomes the action handler's source of truth.
-        filterResourceData(result.data);
         const descriptor = media.normalizeReelMedia(result, {
           isVideo,
           shortcode: reelsPath,
@@ -4958,6 +4934,8 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           throw new Error("Cannot find Reel media resource.");
         }
         if (!descriptor.owner) {
+          logger("carousel_media:", "undefined username");
+          alert("carousel_media: undefined username");
           throw new Error("Cannot find Reel media owner.");
         }
 
