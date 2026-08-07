@@ -276,6 +276,8 @@ export async function createUserscriptRuntime(options = {}) {
   const abortedDownloads = [];
   const deferredRequests = [];
   const requests = [];
+  const fetchRequests = [];
+  const abortedFetchRequests = [];
   const downloads = [];
   const styles = [];
   const menuCommands = new Map();
@@ -319,12 +321,44 @@ export async function createUserscriptRuntime(options = {}) {
   window.Mediabunny = createMediabunnyMock();
 
   window.alert = vi.fn((message) => alerts.push(String(message)));
-  window.fetch = vi.fn(async () => ({
-    arrayBuffer: async () => new ArrayBuffer(0),
-    blob: async () => new window.Blob([], { type: "application/octet-stream" }),
-    ok: true,
-    status: 200,
-  }));
+  window.fetch = vi.fn((url, fetchOptions = {}) => {
+    const request = {
+      ...fetchOptions,
+      headers: fetchOptions.headers || {},
+      url: String(url),
+    };
+    fetchRequests.push(request);
+    const route = (options.fetchNetwork || []).find((candidate) =>
+      matchesRoute(candidate, request),
+    );
+    const response = normalizeNetworkResponse(
+      request,
+      route?.response || options.defaultFetchResponse || { body: {} },
+    );
+
+    if (response.defer === true) {
+      return new Promise((_resolve, reject) => {
+        fetchOptions.signal?.addEventListener(
+          "abort",
+          () => {
+            abortedFetchRequests.push(request);
+            reject(new window.DOMException("The operation was aborted.", "AbortError"));
+          },
+          { once: true },
+        );
+      });
+    }
+
+    return Promise.resolve({
+      arrayBuffer: async () => new ArrayBuffer(0),
+      blob: async () =>
+        new window.Blob([], { type: "application/octet-stream" }),
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      text: async () => response.responseText,
+      url: response.finalUrl,
+    });
+  });
   window.URL.createObjectURL = vi.fn(() => "blob:https://www.instagram.com/fixture");
   window.URL.revokeObjectURL = vi.fn();
   window.document.execCommand = vi.fn(() => true);
@@ -390,7 +424,7 @@ export async function createUserscriptRuntime(options = {}) {
       downloadURL:
         "https://raw.githubusercontent.com/paytonison/insta-loader/main/insta-loader.user.js",
       name: "insta-loader",
-      version: "v1.3.2",
+      version: "v1.3.3",
     },
   };
   window.GM_getResourceText = vi.fn((name) => {
@@ -453,9 +487,14 @@ export async function createUserscriptRuntime(options = {}) {
       ? { body: {} }
       : options.defaultNetworkResponse || { body: {} };
     const response = normalizeNetworkResponse(request, route?.response || fallback);
+    let deferredEntry = null;
     const handle = {
       abort: vi.fn(() => {
         abortedRequests.push(request);
+        if (response.ignoreAbort === true) return;
+        if (deferredEntry?.timeoutId != null) {
+          window.clearTimeout(deferredEntry.timeoutId);
+        }
         const pendingIndex = deferredRequests.findIndex(
           (pending) => pending.request === request,
         );
@@ -465,7 +504,16 @@ export async function createUserscriptRuntime(options = {}) {
     };
 
     if (response.defer === true) {
-      deferredRequests.push({ request, response });
+      deferredEntry = { request, response, timeoutId: null };
+      const timeout = Number(request.timeout);
+      if (Number.isFinite(timeout) && timeout > 0) {
+        deferredEntry.timeoutId = window.setTimeout(() => {
+          const pendingIndex = deferredRequests.indexOf(deferredEntry);
+          if (pendingIndex >= 0) deferredRequests.splice(pendingIndex, 1);
+          request.ontimeout?.();
+        }, timeout);
+      }
+      deferredRequests.push(deferredEntry);
     } else {
       window.queueMicrotask(() => dispatchNetworkResponse(request, response));
     }
@@ -493,6 +541,7 @@ export async function createUserscriptRuntime(options = {}) {
       if (!String(pending.request.url).includes(String(urlPart))) continue;
 
       deferredRequests.splice(index, 1);
+      if (pending.timeoutId != null) window.clearTimeout(pending.timeoutId);
       window.queueMicrotask(() =>
         dispatchNetworkResponse(pending.request, pending.response),
       );
@@ -540,6 +589,7 @@ export async function createUserscriptRuntime(options = {}) {
   }
 
   return {
+    abortedFetchRequests,
     abortedDownloads,
     abortedRequests,
     alerts,
@@ -549,6 +599,7 @@ export async function createUserscriptRuntime(options = {}) {
     deferredRequests,
     dom,
     downloads,
+    fetchRequests,
     flushMicrotasks,
     makeVideoActive,
     mediaActions,

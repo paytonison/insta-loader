@@ -231,7 +231,7 @@ function installFixtureRuntime(mediaResponse) {
       downloadURL:
         "https://raw.githubusercontent.com/paytonison/insta-loader/main/insta-loader.user.js",
       name: "insta-loader",
-      version: "v1.3.2",
+      version: "v1.3.3",
     },
   };
   window.GM_getValue = (key, fallback) => {

@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v1.3.2
+// @version            v1.3.3
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -53,6 +53,7 @@
 // @connect            i.instagram.com
 // @connect            raw.githubusercontent.com
 // @connect            scontent.cdninstagram.com
+// @connect            www.instagram.com
 // @require            https://cdn.jsdelivr.net/npm/mediabunny@1.34.5/dist/bundles/mediabunny.min.cjs#sha256-wUFR+x2bDvpqgMAVGy2CvGvULyjTGvGy4UUAm8rae5U=
 // @require            https://code.jquery.com/jquery-3.7.1.min.js#sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=
 // @supportURL         https://github.com/paytonison/insta-loader/
@@ -9154,6 +9155,9 @@
   };
 
   // src/legacy/runtime.js
+  var LEGACY_JSON_REQUEST_TIMEOUT_MS = 15e3;
+  var SAFARI_REQUEST_POLICY_VIOLATION_PATTERN = /(?:secfetch policy violation|resource isolation policy violated)/i;
+  var STORY_SURFACE_ACTION_FAILURE_MESSAGE = "Could not complete this Story or Highlight action. Try again; details are available in Debug Window.";
   function startLegacyUserscript($, Mediabunny2, dependencies) {
     "use strict";
     const {
@@ -9170,6 +9174,7 @@
     let activeApplicationScope = null;
     let activeLegacyRouteKind = null;
     let activeLegacyRouteScope = null;
+    let activeStorySurfaceAction = null;
     const pendingApplicationRequests = /* @__PURE__ */ new Set();
     const downloadAbortControllerByScope = /* @__PURE__ */ new WeakMap();
     function ownApplicationRequest(request) {
@@ -9185,10 +9190,277 @@
       return request;
     }
     function jsonRequest(options) {
-      const request = startJsonRequest(options);
-      if (activeLegacyRouteScope) {
-        activeLegacyRouteScope.trackAbortable(request);
+      const requestOptions = {
+        timeout: LEGACY_JSON_REQUEST_TIMEOUT_MS,
+        ...options
+      };
+      const requestScope = activeLegacyRouteScope;
+      const request = startJsonRequest(requestOptions);
+      if (requestScope) {
+        requestScope.trackAbortable(request);
       }
+      if (!isStorySurfaceInstagramRequest(requestOptions.url)) return request;
+      return request.catch((error) => {
+        if (!isSafariRequestPolicyViolation(error)) throw error;
+        if (requestScope?.disposed) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.ABORT,
+            "The request was cancelled.",
+            { cause: error, url: requestOptions.url }
+          );
+        }
+        logger(
+          "jsonRequest()",
+          "Safari policy rejected the privileged request; retrying in page context.",
+          requestOptions.url
+        );
+        return pageJsonRequest(requestOptions, requestScope);
+      });
+    }
+    function isStorySurfaceInstagramRequest(url) {
+      if (!IS_SAFARI || ![ROUTE_KIND.STORY, ROUTE_KIND.HIGHLIGHT].includes(activeLegacyRouteKind)) {
+        return false;
+      }
+      try {
+        const hostname = new URL(url).hostname;
+        return hostname === "www.instagram.com" || hostname === "i.instagram.com";
+      } catch (_error) {
+        return false;
+      }
+    }
+    function isSafariRequestPolicyViolation(error) {
+      if (error?.category !== REQUEST_ERROR_CATEGORY.HTTP || Number(error?.status) !== 400) {
+        return false;
+      }
+      const body = error?.response?.responseText ?? error?.response?.response ?? "";
+      return SAFARI_REQUEST_POLICY_VIOLATION_PATTERN.test(String(body));
+    }
+    function createPageRequestHeaders(headers) {
+      return Object.fromEntries(
+        Object.entries(headers || {}).filter(
+          ([name]) => name.toLowerCase() !== "user-agent"
+        )
+      );
+    }
+    function findPageRequestApiError(data, url, status, response) {
+      let message = "";
+      let details = null;
+      if (Array.isArray(data?.errors) && data.errors.length > 0) {
+        details = data.errors;
+        message = data.errors.map(
+          (error) => [error?.message, error?.description, error?.code].filter(Boolean).join(" ")
+        ).join(" ");
+      } else if (data?.status === "fail") {
+        details = data;
+        message = [data.message, data.feedback_message].filter(Boolean).join(": ");
+      } else {
+        return null;
+      }
+      const rateLimited = /rate|limit|throttl|please wait|try again later/i.test(message);
+      return new RequestError(
+        rateLimited ? REQUEST_ERROR_CATEGORY.RATE_LIMIT : REQUEST_ERROR_CATEGORY.API,
+        message || "The server rejected the API request.",
+        { details, status, url, response }
+      );
+    }
+    function pageJsonRequest(options, scope) {
+      if (scope?.disposed) {
+        throw new RequestError(
+          REQUEST_ERROR_CATEGORY.ABORT,
+          "The request was cancelled.",
+          { url: options.url }
+        );
+      }
+      const fetchImpl = environment2.window.fetch?.bind(environment2.window);
+      if (typeof fetchImpl !== "function") {
+        throw new RequestError(
+          REQUEST_ERROR_CATEGORY.NETWORK,
+          "The page request fallback is unavailable.",
+          { url: options.url }
+        );
+      }
+      const AbortControllerConstructor = environment2.window.AbortController;
+      const controller = typeof AbortControllerConstructor === "function" ? new AbortControllerConstructor() : null;
+      let cancelRequest;
+      let settled = false;
+      let timeoutId = null;
+      let removeSignalListener = () => {
+      };
+      const cancellation = new Promise((_resolve, reject) => {
+        cancelRequest = reject;
+      });
+      const rejectCancellation = (error) => {
+        if (settled) return;
+        cancelRequest(error);
+        try {
+          controller?.abort();
+        } catch (_error) {
+        }
+      };
+      const abort = () => rejectCancellation(
+        new RequestError(
+          REQUEST_ERROR_CATEGORY.ABORT,
+          "The request was cancelled.",
+          { url: options.url }
+        )
+      );
+      if (options.signal?.aborted) {
+        abort();
+      } else if (options.signal) {
+        options.signal.addEventListener("abort", abort, { once: true });
+        removeSignalListener = () => options.signal.removeEventListener("abort", abort);
+      }
+      const timeout = Number(options.timeout);
+      if (Number.isFinite(timeout) && timeout > 0) {
+        timeoutId = setTimeout2(() => {
+          rejectCancellation(
+            new RequestError(
+              REQUEST_ERROR_CATEGORY.TIMEOUT,
+              "The request timed out.",
+              { url: options.url }
+            )
+          );
+        }, Math.floor(timeout));
+      }
+      const fetchRequest = Promise.resolve().then(
+        () => fetchImpl(options.url, {
+          method: options.method || "GET",
+          headers: createPageRequestHeaders(options.headers),
+          body: options.data,
+          credentials: "include",
+          signal: controller?.signal
+        })
+      ).then(async (response) => {
+        const status = Number(response?.status) || 200;
+        const finalUrl = String(response?.url || options.url);
+        const responseText = await response.text();
+        const responseRecord = {
+          finalUrl,
+          response: responseText,
+          responseText,
+          status
+        };
+        if (status === 429) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.RATE_LIMIT,
+            "The server rate-limited the request.",
+            { status, url: options.url, response: responseRecord }
+          );
+        }
+        if (status < 200 || status >= 300) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.HTTP,
+            `The request returned HTTP ${status}.`,
+            { status, url: options.url, response: responseRecord }
+          );
+        }
+        if (/\/(accounts\/login|challenge|checkpoint)\b/i.test(finalUrl)) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.LOGIN,
+            "The request was redirected to a login or checkpoint page.",
+            { status, url: finalUrl, response: responseRecord }
+          );
+        }
+        if (/^\s*</.test(responseText)) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.PARSE,
+            "The server returned HTML instead of JSON.",
+            { status, url: options.url, response: responseRecord }
+          );
+        }
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch (error) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.PARSE,
+            "The response could not be parsed as JSON.",
+            {
+              cause: error,
+              status,
+              url: options.url,
+              response: responseRecord
+            }
+          );
+        }
+        if (options.detectApiErrors !== false) {
+          const apiError = findPageRequestApiError(
+            data,
+            options.url,
+            status,
+            responseRecord
+          );
+          if (apiError) throw apiError;
+        }
+        if (options.validate) {
+          let valid;
+          try {
+            valid = options.validate(data, responseRecord);
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            throw new RequestError(
+              REQUEST_ERROR_CATEGORY.API,
+              error?.message || "The response failed API validation.",
+              {
+                cause: error,
+                status,
+                url: options.url,
+                response: responseRecord
+              }
+            );
+          }
+          if (valid === false) {
+            throw new RequestError(
+              REQUEST_ERROR_CATEGORY.API,
+              "The response failed API validation.",
+              { status, url: options.url, response: responseRecord }
+            );
+          }
+        }
+        if (!options.transform) return data;
+        try {
+          return options.transform(data, responseRecord);
+        } catch (error) {
+          if (error instanceof RequestError) throw error;
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.PARSE,
+            error?.message || "The JSON response could not be processed.",
+            {
+              cause: error,
+              status,
+              url: options.url,
+              response: responseRecord
+            }
+          );
+        }
+      }).catch((error) => {
+        if (error instanceof RequestError) throw error;
+        if (controller?.signal.aborted) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.ABORT,
+            "The request was cancelled.",
+            { cause: error, url: options.url }
+          );
+        }
+        throw new RequestError(
+          REQUEST_ERROR_CATEGORY.NETWORK,
+          error?.message || "The network request failed.",
+          { cause: error, url: options.url }
+        );
+      });
+      const promise = Promise.race([fetchRequest, cancellation]).finally(() => {
+        settled = true;
+        removeSignalListener();
+        if (timeoutId != null) clearTimeout(timeoutId);
+      });
+      const request = {
+        promise,
+        abort,
+        then: promise.then.bind(promise),
+        catch: promise.catch.bind(promise),
+        finally: promise.finally.bind(promise)
+      };
+      if (scope && !scope.disposed) scope.trackAbortable(request);
       return request;
     }
     const {
@@ -11597,18 +11869,135 @@
         return Promise.resolve(void 0);
       }
     }
-    async function downloadStoryBatchDescriptor(descriptor, allowDash) {
+    function storyActionErrorChainIncludes(error, predicate) {
+      const visited = /* @__PURE__ */ new Set();
+      let current = error;
+      while (current != null && (typeof current === "object" || typeof current === "function") && !visited.has(current)) {
+        if (predicate(current)) return true;
+        visited.add(current);
+        current = current.cause;
+      }
+      return error === -1 && predicate(error);
+    }
+    function isStoryActionAbort(error) {
+      return storyActionErrorChainIncludes(
+        error,
+        (candidate) => candidate?.category === "abort" || candidate?.name === "AbortError"
+      );
+    }
+    function isStoryActionErrorReported(error) {
+      return storyActionErrorChainIncludes(
+        error,
+        (candidate) => candidate === -1 || candidate?.alreadyReported === true
+      );
+    }
+    function getStoryActionFailureDetails(error) {
+      const visited = /* @__PURE__ */ new Set();
+      let current = error;
+      while (current != null && (typeof current === "object" || typeof current === "function") && !visited.has(current)) {
+        visited.add(current);
+        if (current.url || current.status || current.category) {
+          return {
+            category: current.category || null,
+            status: current.status || null,
+            url: current.url || null
+          };
+        }
+        current = current.cause;
+      }
+      return { category: null, status: null, url: null };
+    }
+    function createStorySurfaceRouteCancellation(scope) {
+      let armed = true;
+      let cancelled = false;
+      let release = () => {
+      };
+      const createAbortError2 = () => new RequestError(
+        REQUEST_ERROR_CATEGORY.ABORT,
+        "The Story or Highlight route was disposed."
+      );
+      const promise = new Promise((_resolve, reject) => {
+        const abort = () => {
+          if (!armed) return;
+          cancelled = true;
+          armed = false;
+          reject(createAbortError2());
+        };
+        if (!scope || scope.disposed) {
+          abort();
+          return;
+        }
+        const releaseScopeCleanup = scope.defer(abort);
+        release = () => {
+          if (!armed) return;
+          armed = false;
+          releaseScopeCleanup();
+        };
+      });
+      return {
+        operationOptions: createDownloadOperationOptions(),
+        promise,
+        release,
+        throwIfCancelled() {
+          if (cancelled || !scope || scope.disposed) {
+            throw createAbortError2();
+          }
+        }
+      };
+    }
+    function throwIfStorySurfaceActionCancelled(actionLifecycle) {
+      actionLifecycle?.throwIfCancelled?.();
+    }
+    function createStorySurfaceMediaActionOptions(actionLifecycle) {
+      if (!actionLifecycle) return {};
+      return {
+        operationOptions: actionLifecycle.operationOptions,
+        throwIfCancelled: () => throwIfStorySurfaceActionCancelled(actionLifecycle)
+      };
+    }
+    function runStorySurfaceAction(action, context) {
+      if (activeStorySurfaceAction) return activeStorySurfaceAction;
+      const routeCancellation = createStorySurfaceRouteCancellation(
+        activeLegacyRouteScope
+      );
+      updateLoadingBar(true);
+      const actionPromise = Promise.resolve().then(
+        () => action(routeCancellation)
+      );
+      const task = Promise.race([actionPromise, routeCancellation.promise]).catch((error) => {
+        if (isStoryActionAbort(error)) return void 0;
+        const failureDetails = getStoryActionFailureDetails(error);
+        console.error(`${context} failed:`, error, failureDetails);
+        logger(context, "reject", error?.message || error, failureDetails);
+        if (!isStoryActionErrorReported(error)) {
+          alert(STORY_SURFACE_ACTION_FAILURE_MESSAGE);
+        }
+        return void 0;
+      }).finally(() => {
+        routeCancellation.release();
+        updateLoadingBar(false);
+        if (activeStorySurfaceAction === task) {
+          activeStorySurfaceAction = null;
+        }
+      });
+      activeStorySurfaceAction = task;
+      return task;
+    }
+    async function downloadStoryBatchDescriptor(descriptor, allowDash, actionLifecycle) {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       return await executeMediaDescriptor(
         descriptor,
         media.MEDIA_INTENT.DOWNLOAD,
         {
+          ...createStorySurfaceMediaActionOptions(actionLifecycle),
           useMediaApi: allowDash && descriptor.kind === "video" && !state.tempFetchRateLimit,
           useDash: allowDash,
           markMediaApiFallback: allowDash
         }
       );
     }
-    function scheduleStoryBatchDownloads(payload, surface, allowDash = false) {
+    function scheduleStoryBatchDownloads(payload, surface, allowDash = false, actionLifecycle) {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       const descriptors = buildStoryBatchDescriptors(payload, {
         surface,
         renamePublishDate: USER_SETTING.RENAME_PUBLISH_DATE,
@@ -11619,7 +12008,12 @@
       descriptors.forEach((descriptor, index) => {
         routeSetTimeout(() => {
           fireAndReport(
-            () => downloadStoryBatchDescriptor(descriptor, allowDash).then(() => {
+            () => downloadStoryBatchDescriptor(
+              descriptor,
+              allowDash,
+              actionLifecycle
+            ).then(() => {
+              throwIfStorySurfaceActionCancelled(actionLifecycle);
               setDownloadProgress(++complete, descriptors.length);
             }),
             "downloadStoryBatchDescriptor()"
@@ -11627,34 +12021,38 @@
         }, 100 * index);
       });
     }
-    async function onHighlightsStoryAll() {
-      updateLoadingBar(true);
+    async function onHighlightsStoryAll(actionLifecycle) {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       let highlightId = location.href.replace(/\/$/gi, "").split("/").at(-1);
       let highStories = await getHighlightStories(highlightId);
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       if (USER_SETTING.DIRECT_DOWNLOAD_STORY) {
         scheduleStoryBatchDownloads(
           highStories,
           STORY_SURFACE.HIGHLIGHT,
-          true
+          true,
+          actionLifecycle
         );
       } else {
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         IG_createDM(false, true, true);
         createStoryListDOM(highStories, "highlights");
       }
     }
-    async function onHighlightsStory(isDownload, isPreview) {
+    async function onHighlightsStory(isDownload, isPreview, actionLifecycle) {
       var username = getHighlightsStoryUsername();
       if (isDownload) {
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         let date = (/* @__PURE__ */ new Date()).getTime();
         let timestamp = Math.floor(date / 1e3);
         let highlightId = location.href.replace(/\/$/gi, "").split("/").at(-1);
         let highStories;
-        updateLoadingBar(true);
         if (state.GL_dataCache.highlights[highlightId]) {
           logger("Fetch from memory cache:", highlightId);
           highStories = state.GL_dataCache.highlights[highlightId];
         } else {
           highStories = await getHighlightStories(highlightId);
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
           state.GL_dataCache.highlights[highlightId] = highStories;
         }
         const domState = readLegacyHighlightDomState(
@@ -11693,14 +12091,20 @@
           descriptor,
           isPreview ? media.MEDIA_INTENT.PREVIEW : media.MEDIA_INTENT.DOWNLOAD,
           {
+            ...createStorySurfaceMediaActionOptions(actionLifecycle),
             defaultTimestamp: timestamp,
+            deferMediaApiRequestFailureAlert: true,
             includeIndex: false,
             logMediaApiError: true,
             swallowMediaApiFailure: true,
             onMediaApiFallback: async () => {
               delete state.GL_dataCache.highlights[responseCacheKey];
               state.tempFetchRateLimit = true;
-              return await onHighlightsStory(true, isPreview);
+              return await onHighlightsStory(
+                true,
+                isPreview,
+                actionLifecycle
+              );
             },
             onOutput: (context) => {
               if (context.source === "cache") {
@@ -11722,7 +12126,6 @@
         if (!actionContext.mediaApiPolicy.requestMediaApi) {
           state.tempFetchRateLimit = false;
         }
-        updateLoadingBar(false);
       } else {
         if (!$(".IG_DWHISTORY").length) {
           let $element = null;
@@ -11770,19 +12173,20 @@
         }
       }
     }
-    async function onHighlightsStoryThumbnail(isDownload) {
+    async function onHighlightsStoryThumbnail(isDownload, actionLifecycle) {
       if (isDownload) {
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         let date = (/* @__PURE__ */ new Date()).getTime();
         let timestamp = Math.floor(date / 1e3);
         let highlightId = location.href.replace(/\/$/gi, "").split("/").at(-1);
         let username = "";
         let highStories;
-        updateLoadingBar(true);
         if (state.GL_dataCache.highlights[highlightId]) {
           logger("Fetch from memory cache:", highlightId);
           highStories = state.GL_dataCache.highlights[highlightId];
         } else {
           highStories = await getHighlightStories(highlightId);
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
           state.GL_dataCache.highlights[highlightId] = highStories;
         }
         const domState = readLegacyHighlightDomState(
@@ -11816,15 +12220,20 @@
           descriptor,
           media.MEDIA_INTENT.THUMBNAIL,
           {
+            ...createStorySurfaceMediaActionOptions(actionLifecycle),
             allowMediaApiForThumbnail: true,
             defaultTimestamp: timestamp,
+            deferMediaApiRequestFailureAlert: true,
             includeIndex: false,
             logMediaApiError: true,
             swallowMediaApiFailure: true,
             onMediaApiFallback: async () => {
               delete state.GL_dataCache.highlights[responseCacheKey];
               state.tempFetchRateLimit = true;
-              return await onHighlightsStoryThumbnail(true);
+              return await onHighlightsStoryThumbnail(
+                true,
+                actionLifecycle
+              );
             },
             onOutput: (context) => {
               if (context.source === "cache") {
@@ -11848,7 +12257,6 @@
         if (!actionContext.mediaApiPolicy.requestMediaApi) {
           state.tempFetchRateLimit = false;
         }
-        updateLoadingBar(false);
       } else {
         setStoryProgressIndexByUsername(
           $(".IG_DWHISTORY").parent(),
@@ -12861,25 +13269,33 @@
         console.error("createStoryListDOM()", err);
       }
     }
-    async function onStoryAll() {
-      updateLoadingBar(true);
+    async function onStoryAll(actionLifecycle) {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       let username = $("body > div section._ac0a header._ac0k ._ac0l a + div a").first().text() || location.pathname.split("/").filter((s) => s.length > 0).at(1);
       let userInfo = await getUserId(username);
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       let userId = userInfo.user.pk;
       let stories = await getStories(userId);
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       if (USER_SETTING.DIRECT_DOWNLOAD_STORY) {
-        scheduleStoryBatchDownloads(stories, STORY_SURFACE.STORY);
+        scheduleStoryBatchDownloads(
+          stories,
+          STORY_SURFACE.STORY,
+          false,
+          actionLifecycle
+        );
       } else {
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         IG_createDM(false, true, true);
         createStoryListDOM(stories, "stories");
       }
     }
-    async function onStory(isDownload, isForce, isPreview) {
+    async function onStory(isDownload, isForce, isPreview, actionLifecycle) {
       var username = $("body > div section._ac0a header._ac0k ._ac0l a + div a").first().text() || location.pathname.split("/").filter((s) => s.length > 0).at(1);
       if (isDownload) {
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         let date = (/* @__PURE__ */ new Date()).getTime();
         let timestamp = Math.floor(date / 1e3);
-        updateLoadingBar(true);
         const intent = isPreview ? STORY_INTENT.PREVIEW : STORY_INTENT.DOWNLOAD;
         const initialMediaApiPolicy = getStoryMediaApiPolicyInputs(
           USER_SETTING,
@@ -12888,8 +13304,10 @@
         );
         if (initialMediaApiPolicy.requestMediaApi) {
           let userInfo = await getUserId(username);
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
           let userId = userInfo.user.pk;
           let stories = await getStories(userId);
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
           const domState = readLegacyStoryDomState();
           const actionContext = createLegacyStoryActionContext(
             STORY_SURFACE.STORY,
@@ -12916,13 +13334,20 @@
             descriptor,
             isPreview ? media.MEDIA_INTENT.PREVIEW : media.MEDIA_INTENT.DOWNLOAD,
             {
+              ...createStorySurfaceMediaActionOptions(actionLifecycle),
               defaultTimestamp: timestamp,
+              deferMediaApiRequestFailureAlert: true,
               includeIndex: false,
               logMediaApiError: true,
               swallowMediaApiFailure: true,
               onMediaApiFallback: async () => {
                 state.tempFetchRateLimit = true;
-                return await onStory(isDownload, isForce, isPreview);
+                return await onStory(
+                  isDownload,
+                  isForce,
+                  isPreview,
+                  actionLifecycle
+                );
               },
               onOutput: (context) => {
                 if (context.source === "cache") {
@@ -12942,7 +13367,6 @@
             }
           );
           if (usedImageCache) return;
-          updateLoadingBar(false);
           return;
         }
         if ($("body > div section:visible video[playsinline]").length > 0) {
@@ -12953,8 +13377,10 @@
             stories = state.GL_dataCache.stories[username];
           } else {
             let userInfo = await getUserId(username);
+            throwIfStorySurfaceActionCancelled(actionLifecycle);
             let userId = userInfo.user.pk;
             stories = await getStories(userId);
+            throwIfStorySurfaceActionCancelled(actionLifecycle);
             fetchedStories = true;
             state.GL_dataCache.stories[username] = stories;
           }
@@ -12976,7 +13402,12 @@
           if (!descriptor || descriptor.kind !== "video") {
             if (!fetchedStories) {
               logger("Memory cache not found, try fetch from API:", username);
-              return await onStory(true, true);
+              return await onStory(
+                true,
+                true,
+                void 0,
+                actionLifecycle
+              );
             }
             alert(_i18n("NO_VID_URL"));
           } else {
@@ -12984,6 +13415,7 @@
               descriptor,
               isPreview ? media.MEDIA_INTENT.PREVIEW : media.MEDIA_INTENT.DOWNLOAD,
               {
+                ...createStorySurfaceMediaActionOptions(actionLifecycle),
                 defaultTimestamp: timestamp,
                 includeIndex: false,
                 replacePreviewHost: false,
@@ -13023,6 +13455,7 @@
             descriptor,
             isPreview ? media.MEDIA_INTENT.PREVIEW : media.MEDIA_INTENT.DOWNLOAD,
             {
+              ...createStorySurfaceMediaActionOptions(actionLifecycle),
               allowNonCanonicalImageCache: true,
               defaultTimestamp: timestamp,
               imageCacheKey: mediaId,
@@ -13041,7 +13474,6 @@
           if (usedImageCache) return;
         }
         state.tempFetchRateLimit = false;
-        updateLoadingBar(false);
       } else {
         if (!$(".IG_DWSTORY").length) {
           state.GL_dataCache.stories = {};
@@ -13112,13 +13544,13 @@
         }
       }
     }
-    async function onStoryThumbnail(isDownload, isForce) {
+    async function onStoryThumbnail(isDownload, isForce, actionLifecycle) {
       if (isDownload) {
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         let date = (/* @__PURE__ */ new Date()).getTime();
         let timestamp = Math.floor(date / 1e3);
         let username = $("body > div section._ac0a header._ac0k ._ac0l a + div a").first().text() || location.pathname.split("/").at(2);
         let mediaId = null;
-        updateLoadingBar(true);
         const initialMediaApiPolicy = getStoryMediaApiPolicyInputs(
           USER_SETTING,
           state,
@@ -13126,8 +13558,10 @@
         );
         if (initialMediaApiPolicy.requestMediaApi) {
           let userInfo = await getUserId(username);
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
           let userId = userInfo.user.pk;
           let stories2 = await getStories(userId);
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
           const domState2 = readLegacyStoryDomState();
           const actionContext2 = createLegacyStoryActionContext(
             STORY_SURFACE.STORY,
@@ -13155,14 +13589,20 @@
             descriptor2,
             media.MEDIA_INTENT.THUMBNAIL,
             {
+              ...createStorySurfaceMediaActionOptions(actionLifecycle),
               allowMediaApiForThumbnail: true,
               defaultTimestamp: timestamp,
+              deferMediaApiRequestFailureAlert: true,
               includeIndex: false,
               logMediaApiError: true,
               swallowMediaApiFailure: true,
               onMediaApiFallback: async () => {
                 state.tempFetchRateLimit = true;
-                return await onStoryThumbnail(true, isForce);
+                return await onStoryThumbnail(
+                  true,
+                  isForce,
+                  actionLifecycle
+                );
               },
               onOutput: (context) => {
                 if (context.source === "cache") {
@@ -13181,7 +13621,6 @@
             }
           );
           if (usedImageCache) return;
-          updateLoadingBar(false);
           return;
         }
         let stories;
@@ -13191,8 +13630,10 @@
           stories = state.GL_dataCache.stories[username];
         } else {
           let userInfo = await getUserId(username);
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
           let userId = userInfo.user.pk;
           stories = await getStories(userId);
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
           fetchedStories = true;
         }
         const domState = readLegacyStoryDomState();
@@ -13214,7 +13655,7 @@
         if (!descriptor) {
           if (!fetchedStories) {
             logger("Memory cache not found, try fetch from API:", username);
-            return await onStoryThumbnail(true, true);
+            return await onStoryThumbnail(true, true, actionLifecycle);
           }
           throw new Error("Cannot resolve the current Story thumbnail.");
         }
@@ -13222,6 +13663,7 @@
           descriptor,
           media.MEDIA_INTENT.THUMBNAIL,
           {
+            ...createStorySurfaceMediaActionOptions(actionLifecycle),
             defaultTimestamp: timestamp,
             includeIndex: false,
             resolveMissingOwner: false,
@@ -13231,7 +13673,6 @@
           }
         );
         state.tempFetchRateLimit = false;
-        updateLoadingBar(false);
       } else {
         if ($("body > div div.IG_DWSTORY").parent().find("video[class]").length) {
           let $element = null;
@@ -13291,24 +13732,30 @@
         throw err;
       });
     }
-    function getUserId(username) {
+    async function getUserId(username) {
       const getURL = `https://www.instagram.com/web/search/topsearch/?query=${username}`;
-      return jsonRequest({ url: getURL, detectApiErrors: false }).then((obj) => {
-        const result = obj?.users?.find(
-          (pos) => pos.user.username?.toLowerCase() === username?.toLowerCase()
-        );
-        if (result != null) {
-          logger("getUserId()", result);
-          return result;
-        }
-        return getUserIdWithAgent(username).catch((err) => {
-          alert("Cannot find user info from getUserId()");
-          throw err;
-        });
-      }).catch((err) => {
+      let obj;
+      try {
+        obj = await jsonRequest({ url: getURL, detectApiErrors: false });
+      } catch (err) {
         logger("getUserId()", "reject", err);
+        if (isStoryActionAbort(err)) throw err;
+        return await getUserIdWithAgent(username);
+      }
+      const result = obj?.users?.find(
+        (pos) => pos.user.username?.toLowerCase() === username?.toLowerCase()
+      );
+      if (result != null) {
+        logger("getUserId()", result);
+        return result;
+      }
+      try {
+        return await getUserIdWithAgent(username);
+      } catch (err) {
+        alert("Cannot find user info from getUserId()");
+        if (err && typeof err === "object") err.alreadyReported = true;
         throw err;
-      });
+      }
     }
     function getUserIdWithAgent(username) {
       const getURL = `https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`;
@@ -13941,8 +14388,7 @@
       ),
       saveStream: (url, metadata) => saveFiles(url, metadata, metadata.downloadOperationOptions)
     });
-    async function downloadDashStreams(videoUrl, audioUrl, username, sourceType, timestamp, shortcode) {
-      const downloadOperationOptions = createDownloadOperationOptions();
+    async function downloadDashStreams(videoUrl, audioUrl, username, sourceType, timestamp, shortcode, operationOptions = createDownloadOperationOptions()) {
       return await dashExecutionCoordinator.execute({
         videoUrl,
         audioUrl,
@@ -13951,7 +14397,7 @@
           sourceType,
           timestamp,
           shortcode,
-          downloadOperationOptions
+          downloadOperationOptions: operationOptions
         }
       });
     }
@@ -13962,9 +14408,13 @@
       timestamp,
       shortcode,
       isPreview,
-      index
+      index,
+      operationOptions,
+      throwIfCancelled = () => {
+      }
     }) {
       try {
+        throwIfCancelled();
         if (!USER_SETTING.PREFER_DASH_MANIFEST) return false;
         if (!USER_SETTING.FORCE_RESOURCE_VIA_MEDIA) return false;
         if (!mediaItem?.video_dash_manifest) return false;
@@ -13989,6 +14439,7 @@
           audio: best.audio ? { bandwidth: best.audio.bandwidth, codecs: best.audio.codecs } : "(none)"
         });
         if (isPreview) {
+          throwIfCancelled();
           openNewTab(vUrl);
           return true;
         }
@@ -14001,7 +14452,7 @@
             filetype: "mp4",
             shortcode,
             index
-          });
+          }, operationOptions);
         }
         logger("[DASH]", "download mode -> DASH video+audio");
         return await downloadDashStreams(
@@ -14010,9 +14461,11 @@
           username,
           sourceType,
           timestamp,
-          shortcode
+          shortcode,
+          operationOptions
         );
       } catch (e) {
+        if (isStoryActionAbort(e)) throw e;
         logger(
           "[DASH]",
           "tryHandleDashFromMediaItem failed -> fallback",
@@ -14283,6 +14736,8 @@
       let dashResult;
       let fallbackActionHandled = false;
       let fallbackActionResult;
+      const throwIfCancelled = typeof actionOptions.throwIfCancelled === "function" ? actionOptions.throwIfCancelled : () => {
+      };
       function resolveOutputOption(name, context, fallback) {
         if (!Object.prototype.hasOwnProperty.call(actionOptions, name)) {
           return fallback;
@@ -14343,6 +14798,7 @@
         }
       }
       function notifyActionOutput(context) {
+        throwIfCancelled();
         actionOptions.onOutput?.(context);
       }
       return new media.MediaActionService(
@@ -14355,19 +14811,22 @@
             return getImageFromCache(cacheKey);
           },
           async resolveMedia({ descriptor, intent }) {
+            throwIfCancelled();
             mediaApiAttempted = true;
             updateLoadingBar(true);
             let result;
             try {
               result = await getMediaInfo(descriptor.mediaId);
             } catch (cause) {
+              if (isStoryActionAbort(cause)) throw cause;
               const error = new Error("Media API request failed.");
               error.cause = cause;
-              error.alreadyReported = true;
+              error.alreadyReported = cause === -1 || cause?.alreadyReported === true;
               throw error;
             } finally {
               updateLoadingBar(false);
             }
+            throwIfCancelled();
             if (result?.status !== "ok") {
               const error = new Error(
                 result?.message || "Media API returned an unsuccessful response."
@@ -14392,6 +14851,7 @@
             return resolvePreviewDashDescriptor(resolved, intent);
           },
           async resolveDash(context) {
+            throwIfCancelled();
             const { descriptor, originalDescriptor } = context;
             const cachedMediaItem = state.GL_mediaDataCache[descriptor.mediaId];
             const mediaItem = [
@@ -14424,7 +14884,9 @@
                 descriptor.shortcode
               ),
               isPreview: false,
-              index: metadata.index
+              index: metadata.index,
+              operationOptions: actionOptions.operationOptions,
+              throwIfCancelled
             });
             if (!handled) return null;
             dashResult = handled;
@@ -14444,7 +14906,8 @@
                 createActionFileOptions(
                   context,
                   media.MEDIA_INTENT.DOWNLOAD
-                )
+                ),
+                actionOptions.operationOptions
               );
             },
             preview(context) {
@@ -14463,7 +14926,8 @@
                 createActionFileOptions(
                   context,
                   media.MEDIA_INTENT.THUMBNAIL
-                )
+                ),
+                actionOptions.operationOptions
               );
             }
           },
@@ -14481,25 +14945,29 @@
                 context
               );
             }
-            if (context.stage === media.MEDIA_ACTION_STAGE.MEDIA_API && !context.willFallback && !error?.alreadyReported) {
+            if (context.stage === media.MEDIA_ACTION_STAGE.MEDIA_API && !context.willFallback && !error?.alreadyReported && !(actionOptions.deferMediaApiRequestFailureAlert === true && !error?.response)) {
               alert(
                 "Fetch failed from Media API. API response message: " + error.message
               );
+              error.alreadyReported = true;
             }
           }
         },
         {
           dashBeforeMediaApi: actionOptions.dashBeforeMediaApi === true,
+          failOpenOnCacheError: (error) => !isStoryActionAbort(error),
+          failOpenOnDashError: (error) => !isStoryActionAbort(error),
           useImageCache: ({ descriptor }) => actionOptions.useImageCache !== false && USER_SETTING.CAPTURE_IMAGE_VIA_MEDIA_CACHE && (descriptor.hasCanonicalMediaId !== false || actionOptions.allowNonCanonicalImageCache === true),
           useMediaApi: ({ descriptor, intent }) => actionOptions.useMediaApi !== false && USER_SETTING.FORCE_RESOURCE_VIA_MEDIA && descriptor.hasCanonicalMediaId !== false && (intent !== media.MEDIA_INTENT.THUMBNAIL || actionOptions.allowMediaApiForThumbnail === true),
           useDash: ({ descriptor, originalDescriptor }) => !fallbackActionHandled && actionOptions.useDash !== false && USER_SETTING.PREFER_DASH_MANIFEST && USER_SETTING.FORCE_RESOURCE_VIA_MEDIA && descriptor.hasCanonicalMediaId !== false && Boolean(
             descriptor.dashManifest || descriptor.rawMediaItem?.video_dash_manifest || originalDescriptor.dashManifest || originalDescriptor.rawMediaItem?.video_dash_manifest || state.GL_mediaDataCache[descriptor.mediaId]?.video_dash_manifest
           ),
-          failOpenOnMediaApiError: (error) => USER_SETTING.FALLBACK_TO_BLOB_FETCH_IF_MEDIA_API_THROTTLED && !error?.alreadyReported
+          failOpenOnMediaApiError: (error) => USER_SETTING.FALLBACK_TO_BLOB_FETCH_IF_MEDIA_API_THROTTLED && !error?.alreadyReported && !isStoryActionAbort(error)
         }
       );
     }
     async function executeMediaDescriptor(descriptor, intent, actionOptions = {}) {
+      actionOptions.throwIfCancelled?.();
       const sourceType = descriptor.sourceType || (descriptor.kind === "video" ? "video" : "photo");
       let timestamp = actionOptions.defaultTimestamp ?? Math.floor((/* @__PURE__ */ new Date()).getTime() / 1e3);
       let username = descriptor.owner || state.GL_username;
@@ -14515,6 +14983,7 @@
             err.message
           );
         });
+        actionOptions.throwIfCancelled?.();
         if (username == null) username = "NONE";
       }
       if (USER_SETTING.RENAME_PUBLISH_DATE && descriptor.publishTime) {
@@ -14534,6 +15003,7 @@
         uid: actionOptions.uid
       }, actionOptions);
       try {
+        actionOptions.throwIfCancelled?.();
         return await actionService.execute(actionDescriptor, intent);
       } catch (error) {
         if (actionOptions.swallowMediaApiFailure === true && error?.response) {
@@ -15071,30 +15541,43 @@
           );
         }
       );
-      listenApplicationJQuery($("body"), "click", ".IG_DWSTORY", function() {
-        fireAndReport(() => onStory(true), "onStory()");
+      listenApplicationJQuery($("body"), "click", ".IG_DWSTORY", function(e) {
+        consumeInjectedClick(e);
+        return runStorySurfaceAction(
+          (actionLifecycle) => onStory(true, void 0, void 0, actionLifecycle),
+          "onStory()"
+        );
       });
-      listenApplicationJQuery($("body"), "click", ".IG_DWSTORY_ALL", function() {
-        fireAndReport(() => onStoryAll(), "onStoryAll()");
+      listenApplicationJQuery($("body"), "click", ".IG_DWSTORY_ALL", function(e) {
+        consumeInjectedClick(e);
+        return runStorySurfaceAction(
+          (actionLifecycle) => onStoryAll(actionLifecycle),
+          "onStoryAll()"
+        );
       });
       listenApplicationJQuery($("body"), "click", ".IG_DWNEWTAB", function(e) {
-        e.preventDefault();
-        fireAndReport(() => onStory(true, true, true), "onStory()");
+        consumeInjectedClick(e);
+        return runStorySurfaceAction(
+          (actionLifecycle) => onStory(true, true, true, actionLifecycle),
+          "onStory()"
+        );
       });
       listenApplicationJQuery(
         $("body"),
         "click",
         ".IG_DWSTORY_THUMBNAIL",
-        function() {
-          fireAndReport(
-            () => onStoryThumbnail(true),
+        function(e) {
+          consumeInjectedClick(e);
+          return runStorySurfaceAction(
+            (actionLifecycle) => onStoryThumbnail(true, void 0, actionLifecycle),
             "onStoryThumbnail()"
           );
         }
       );
-      listenApplicationJQuery($("body"), "click", ".IG_DWHISTORY", function() {
-        fireAndReport(
-          () => onHighlightsStory(true),
+      listenApplicationJQuery($("body"), "click", ".IG_DWHISTORY", function(e) {
+        consumeInjectedClick(e);
+        return runStorySurfaceAction(
+          (actionLifecycle) => onHighlightsStory(true, void 0, actionLifecycle),
           "onHighlightsStory()"
         );
       });
@@ -15102,17 +15585,18 @@
         $("body"),
         "click",
         ".IG_DWHISTORY_ALL",
-        function() {
-          fireAndReport(
-            () => onHighlightsStoryAll(),
+        function(e) {
+          consumeInjectedClick(e);
+          return runStorySurfaceAction(
+            (actionLifecycle) => onHighlightsStoryAll(actionLifecycle),
             "onHighlightsStoryAll()"
           );
         }
       );
       listenApplicationJQuery($("body"), "click", ".IG_DWHINEWTAB", function(e) {
-        e.preventDefault();
-        fireAndReport(
-          () => onHighlightsStory(true, true),
+        consumeInjectedClick(e);
+        return runStorySurfaceAction(
+          (actionLifecycle) => onHighlightsStory(true, true, actionLifecycle),
           "onHighlightsStory()"
         );
       });
@@ -15120,9 +15604,10 @@
         $("body"),
         "click",
         ".IG_DWHISTORY_THUMBNAIL",
-        function() {
-          fireAndReport(
-            () => onHighlightsStoryThumbnail(true),
+        function(e) {
+          consumeInjectedClick(e);
+          return runStorySurfaceAction(
+            (actionLifecycle) => onHighlightsStoryThumbnail(true, actionLifecycle),
             "onHighlightsStoryThumbnail()"
           );
         }

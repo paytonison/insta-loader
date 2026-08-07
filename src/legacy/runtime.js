@@ -31,6 +31,10 @@ import {
   createStoryVideoSurfaceAdapter,
 } from "../controllers/video/index.js";
 import { RouteCoordinator } from "../core/route-coordinator.js";
+import {
+  REQUEST_ERROR_CATEGORY,
+  RequestError,
+} from "../core/request.js";
 import { ROUTE_KIND } from "../core/routes.js";
 import { USER_SETTING_HIERARCHY } from "../core/settings-store.js";
 import {
@@ -47,6 +51,12 @@ import {
   registerImageCachePerformanceObserver,
 } from "../services/image-cache/index.js";
 import { UpdateCheckService } from "../services/update-check/index.js";
+
+const LEGACY_JSON_REQUEST_TIMEOUT_MS = 15_000;
+const SAFARI_REQUEST_POLICY_VIOLATION_PATTERN =
+  /(?:secfetch policy violation|resource isolation policy violated)/i;
+const STORY_SURFACE_ACTION_FAILURE_MESSAGE =
+  "Could not complete this Story or Highlight action. Try again; details are available in Debug Window.";
 
 export function startLegacyUserscript($, Mediabunny, dependencies) {
   "use strict";
@@ -65,6 +75,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
   let activeApplicationScope = null;
   let activeLegacyRouteKind = null;
   let activeLegacyRouteScope = null;
+  let activeStorySurfaceAction = null;
   const pendingApplicationRequests = new Set();
   const downloadAbortControllerByScope = new WeakMap();
 
@@ -82,10 +93,325 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
   }
 
   function jsonRequest(options) {
-    const request = startJsonRequest(options);
-    if (activeLegacyRouteScope) {
-      activeLegacyRouteScope.trackAbortable(request);
+    const requestOptions = {
+      timeout: LEGACY_JSON_REQUEST_TIMEOUT_MS,
+      ...options,
+    };
+    const requestScope = activeLegacyRouteScope;
+    const request = startJsonRequest(requestOptions);
+    if (requestScope) {
+      requestScope.trackAbortable(request);
     }
+
+    if (!isStorySurfaceInstagramRequest(requestOptions.url)) return request;
+
+    return request.catch((error) => {
+      if (!isSafariRequestPolicyViolation(error)) throw error;
+      if (requestScope?.disposed) {
+        throw new RequestError(
+          REQUEST_ERROR_CATEGORY.ABORT,
+          "The request was cancelled.",
+          { cause: error, url: requestOptions.url },
+        );
+      }
+
+      logger(
+        "jsonRequest()",
+        "Safari policy rejected the privileged request; retrying in page context.",
+        requestOptions.url,
+      );
+      return pageJsonRequest(requestOptions, requestScope);
+    });
+  }
+
+  function isStorySurfaceInstagramRequest(url) {
+    if (
+      !IS_SAFARI ||
+      ![ROUTE_KIND.STORY, ROUTE_KIND.HIGHLIGHT].includes(activeLegacyRouteKind)
+    ) {
+      return false;
+    }
+
+    try {
+      const hostname = new URL(url).hostname;
+      return hostname === "www.instagram.com" || hostname === "i.instagram.com";
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function isSafariRequestPolicyViolation(error) {
+    if (
+      error?.category !== REQUEST_ERROR_CATEGORY.HTTP ||
+      Number(error?.status) !== 400
+    ) {
+      return false;
+    }
+
+    const body =
+      error?.response?.responseText ?? error?.response?.response ?? "";
+    return SAFARI_REQUEST_POLICY_VIOLATION_PATTERN.test(String(body));
+  }
+
+  function createPageRequestHeaders(headers) {
+    return Object.fromEntries(
+      Object.entries(headers || {}).filter(
+        ([name]) => name.toLowerCase() !== "user-agent",
+      ),
+    );
+  }
+
+  function findPageRequestApiError(data, url, status, response) {
+    let message = "";
+    let details = null;
+
+    if (Array.isArray(data?.errors) && data.errors.length > 0) {
+      details = data.errors;
+      message = data.errors
+        .map((error) =>
+          [error?.message, error?.description, error?.code]
+            .filter(Boolean)
+            .join(" "),
+        )
+        .join(" ");
+    } else if (data?.status === "fail") {
+      details = data;
+      message = [data.message, data.feedback_message]
+        .filter(Boolean)
+        .join(": ");
+    } else {
+      return null;
+    }
+
+    const rateLimited =
+      /rate|limit|throttl|please wait|try again later/i.test(message);
+    return new RequestError(
+      rateLimited
+        ? REQUEST_ERROR_CATEGORY.RATE_LIMIT
+        : REQUEST_ERROR_CATEGORY.API,
+      message || "The server rejected the API request.",
+      { details, status, url, response },
+    );
+  }
+
+  function pageJsonRequest(options, scope) {
+    if (scope?.disposed) {
+      throw new RequestError(
+        REQUEST_ERROR_CATEGORY.ABORT,
+        "The request was cancelled.",
+        { url: options.url },
+      );
+    }
+
+    const fetchImpl = environment.window.fetch?.bind(environment.window);
+    if (typeof fetchImpl !== "function") {
+      throw new RequestError(
+        REQUEST_ERROR_CATEGORY.NETWORK,
+        "The page request fallback is unavailable.",
+        { url: options.url },
+      );
+    }
+
+    const AbortControllerConstructor = environment.window.AbortController;
+    const controller =
+      typeof AbortControllerConstructor === "function"
+        ? new AbortControllerConstructor()
+        : null;
+    let cancelRequest;
+    let settled = false;
+    let timeoutId = null;
+    let removeSignalListener = () => {};
+
+    const cancellation = new Promise((_resolve, reject) => {
+      cancelRequest = reject;
+    });
+    const rejectCancellation = (error) => {
+      if (settled) return;
+      cancelRequest(error);
+      try {
+        controller?.abort();
+      } catch (_error) {
+        // The canonical timeout/abort error has already been selected.
+      }
+    };
+    const abort = () =>
+      rejectCancellation(
+        new RequestError(
+          REQUEST_ERROR_CATEGORY.ABORT,
+          "The request was cancelled.",
+          { url: options.url },
+        ),
+      );
+
+    if (options.signal?.aborted) {
+      abort();
+    } else if (options.signal) {
+      options.signal.addEventListener("abort", abort, { once: true });
+      removeSignalListener = () =>
+        options.signal.removeEventListener("abort", abort);
+    }
+
+    const timeout = Number(options.timeout);
+    if (Number.isFinite(timeout) && timeout > 0) {
+      timeoutId = setTimeout(() => {
+        rejectCancellation(
+          new RequestError(
+            REQUEST_ERROR_CATEGORY.TIMEOUT,
+            "The request timed out.",
+            { url: options.url },
+          ),
+        );
+      }, Math.floor(timeout));
+    }
+
+    const fetchRequest = Promise.resolve()
+      .then(() =>
+        fetchImpl(options.url, {
+          method: options.method || "GET",
+          headers: createPageRequestHeaders(options.headers),
+          body: options.data,
+          credentials: "include",
+          signal: controller?.signal,
+        }),
+      )
+      .then(async (response) => {
+        const status = Number(response?.status) || 200;
+        const finalUrl = String(response?.url || options.url);
+        const responseText = await response.text();
+        const responseRecord = {
+          finalUrl,
+          response: responseText,
+          responseText,
+          status,
+        };
+
+        if (status === 429) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.RATE_LIMIT,
+            "The server rate-limited the request.",
+            { status, url: options.url, response: responseRecord },
+          );
+        }
+        if (status < 200 || status >= 300) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.HTTP,
+            `The request returned HTTP ${status}.`,
+            { status, url: options.url, response: responseRecord },
+          );
+        }
+        if (/\/(accounts\/login|challenge|checkpoint)\b/i.test(finalUrl)) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.LOGIN,
+            "The request was redirected to a login or checkpoint page.",
+            { status, url: finalUrl, response: responseRecord },
+          );
+        }
+        if (/^\s*</.test(responseText)) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.PARSE,
+            "The server returned HTML instead of JSON.",
+            { status, url: options.url, response: responseRecord },
+          );
+        }
+
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch (error) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.PARSE,
+            "The response could not be parsed as JSON.",
+            {
+              cause: error,
+              status,
+              url: options.url,
+              response: responseRecord,
+            },
+          );
+        }
+
+        if (options.detectApiErrors !== false) {
+          const apiError = findPageRequestApiError(
+            data,
+            options.url,
+            status,
+            responseRecord,
+          );
+          if (apiError) throw apiError;
+        }
+
+        if (options.validate) {
+          let valid;
+          try {
+            valid = options.validate(data, responseRecord);
+          } catch (error) {
+            if (error instanceof RequestError) throw error;
+            throw new RequestError(
+              REQUEST_ERROR_CATEGORY.API,
+              error?.message || "The response failed API validation.",
+              {
+                cause: error,
+                status,
+                url: options.url,
+                response: responseRecord,
+              },
+            );
+          }
+          if (valid === false) {
+            throw new RequestError(
+              REQUEST_ERROR_CATEGORY.API,
+              "The response failed API validation.",
+              { status, url: options.url, response: responseRecord },
+            );
+          }
+        }
+
+        if (!options.transform) return data;
+        try {
+          return options.transform(data, responseRecord);
+        } catch (error) {
+          if (error instanceof RequestError) throw error;
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.PARSE,
+            error?.message || "The JSON response could not be processed.",
+            {
+              cause: error,
+              status,
+              url: options.url,
+              response: responseRecord,
+            },
+          );
+        }
+      })
+      .catch((error) => {
+        if (error instanceof RequestError) throw error;
+        if (controller?.signal.aborted) {
+          throw new RequestError(
+            REQUEST_ERROR_CATEGORY.ABORT,
+            "The request was cancelled.",
+            { cause: error, url: options.url },
+          );
+        }
+        throw new RequestError(
+          REQUEST_ERROR_CATEGORY.NETWORK,
+          error?.message || "The network request failed.",
+          { cause: error, url: options.url },
+        );
+      });
+
+    const promise = Promise.race([fetchRequest, cancellation]).finally(() => {
+      settled = true;
+      removeSignalListener();
+      if (timeoutId != null) clearTimeout(timeoutId);
+    });
+    const request = {
+      promise,
+      abort,
+      then: promise.then.bind(promise),
+      catch: promise.catch.bind(promise),
+      finally: promise.finally.bind(promise),
+    };
+    if (scope && !scope.disposed) scope.trackAbortable(request);
     return request;
   }
 
@@ -2845,11 +3171,172 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     }
   }
 
-  async function downloadStoryBatchDescriptor(descriptor, allowDash) {
+  function storyActionErrorChainIncludes(error, predicate) {
+    const visited = new Set();
+    let current = error;
+
+    while (
+      current != null &&
+      (typeof current === "object" || typeof current === "function") &&
+      !visited.has(current)
+    ) {
+      if (predicate(current)) return true;
+      visited.add(current);
+      current = current.cause;
+    }
+
+    return error === -1 && predicate(error);
+  }
+
+  function isStoryActionAbort(error) {
+    return storyActionErrorChainIncludes(
+      error,
+      (candidate) =>
+        candidate?.category === "abort" ||
+        candidate?.name === "AbortError",
+    );
+  }
+
+  function isStoryActionErrorReported(error) {
+    return storyActionErrorChainIncludes(
+      error,
+      (candidate) =>
+        candidate === -1 || candidate?.alreadyReported === true,
+    );
+  }
+
+  function getStoryActionFailureDetails(error) {
+    const visited = new Set();
+    let current = error;
+
+    while (
+      current != null &&
+      (typeof current === "object" || typeof current === "function") &&
+      !visited.has(current)
+    ) {
+      visited.add(current);
+      if (current.url || current.status || current.category) {
+        return {
+          category: current.category || null,
+          status: current.status || null,
+          url: current.url || null,
+        };
+      }
+      current = current.cause;
+    }
+
+    return { category: null, status: null, url: null };
+  }
+
+  function createStorySurfaceRouteCancellation(scope) {
+    let armed = true;
+    let cancelled = false;
+    let release = () => {};
+    const createAbortError = () =>
+      new RequestError(
+        REQUEST_ERROR_CATEGORY.ABORT,
+        "The Story or Highlight route was disposed.",
+      );
+    const promise = new Promise((_resolve, reject) => {
+      const abort = () => {
+        if (!armed) return;
+        cancelled = true;
+        armed = false;
+        reject(createAbortError());
+      };
+
+      if (!scope || scope.disposed) {
+        abort();
+        return;
+      }
+
+      const releaseScopeCleanup = scope.defer(abort);
+      release = () => {
+        if (!armed) return;
+        armed = false;
+        releaseScopeCleanup();
+      };
+    });
+
+    return {
+      operationOptions: createDownloadOperationOptions(),
+      promise,
+      release,
+      throwIfCancelled() {
+        if (cancelled || !scope || scope.disposed) {
+          throw createAbortError();
+        }
+      },
+    };
+  }
+
+  function throwIfStorySurfaceActionCancelled(actionLifecycle) {
+    actionLifecycle?.throwIfCancelled?.();
+  }
+
+  function createStorySurfaceMediaActionOptions(actionLifecycle) {
+    if (!actionLifecycle) return {};
+    return {
+      operationOptions: actionLifecycle.operationOptions,
+      throwIfCancelled: () =>
+        throwIfStorySurfaceActionCancelled(actionLifecycle),
+    };
+  }
+
+  /**
+   * Own the visible lifecycle of one user-triggered Story/Highlight action.
+   * Repeated clicks share the pending action instead of starting duplicate
+   * requests or outputs. Route disposal remains an expected silent abort.
+   *
+   * @param {(actionLifecycle: Object) => *} action
+   * @param {String} context
+   * @return {Promise<*>}
+   */
+  function runStorySurfaceAction(action, context) {
+    if (activeStorySurfaceAction) return activeStorySurfaceAction;
+
+    const routeCancellation = createStorySurfaceRouteCancellation(
+      activeLegacyRouteScope,
+    );
+    updateLoadingBar(true);
+    const actionPromise = Promise.resolve().then(() =>
+      action(routeCancellation)
+    );
+    const task = Promise.race([actionPromise, routeCancellation.promise])
+      .catch((error) => {
+        if (isStoryActionAbort(error)) return undefined;
+
+        const failureDetails = getStoryActionFailureDetails(error);
+        console.error(`${context} failed:`, error, failureDetails);
+        logger(context, "reject", error?.message || error, failureDetails);
+        if (!isStoryActionErrorReported(error)) {
+          alert(STORY_SURFACE_ACTION_FAILURE_MESSAGE);
+        }
+        return undefined;
+      })
+      .finally(() => {
+        routeCancellation.release();
+        updateLoadingBar(false);
+        if (activeStorySurfaceAction === task) {
+          activeStorySurfaceAction = null;
+        }
+      });
+
+    activeStorySurfaceAction = task;
+    return task;
+  }
+
+  async function downloadStoryBatchDescriptor(
+    descriptor,
+    allowDash,
+    actionLifecycle,
+  ) {
+    throwIfStorySurfaceActionCancelled(actionLifecycle);
     return await executeMediaDescriptor(
       descriptor,
       media.MEDIA_INTENT.DOWNLOAD,
       {
+        ...createStorySurfaceMediaActionOptions(actionLifecycle),
         useMediaApi:
           allowDash &&
           descriptor.kind === "video" &&
@@ -2860,7 +3347,13 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     );
   }
 
-  function scheduleStoryBatchDownloads(payload, surface, allowDash = false) {
+  function scheduleStoryBatchDownloads(
+    payload,
+    surface,
+    allowDash = false,
+    actionLifecycle,
+  ) {
+    throwIfStorySurfaceActionCancelled(actionLifecycle);
     const descriptors = buildStoryBatchDescriptors(payload, {
       surface,
       renamePublishDate: USER_SETTING.RENAME_PUBLISH_DATE,
@@ -2873,7 +3366,12 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       routeSetTimeout(() => {
         fireAndReport(
           () =>
-            downloadStoryBatchDescriptor(descriptor, allowDash).then(() => {
+            downloadStoryBatchDescriptor(
+              descriptor,
+              allowDash,
+              actionLifecycle,
+            ).then(() => {
+              throwIfStorySurfaceActionCancelled(actionLifecycle);
               setDownloadProgress(++complete, descriptors.length);
             }),
           "downloadStoryBatchDescriptor()",
@@ -2888,19 +3386,21 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    *
    * @return {void}
    */
-  async function onHighlightsStoryAll() {
-    updateLoadingBar(true);
-
+  async function onHighlightsStoryAll(actionLifecycle) {
+    throwIfStorySurfaceActionCancelled(actionLifecycle);
     let highlightId = location.href.replace(/\/$/gi, "").split("/").at(-1);
     let highStories = await getHighlightStories(highlightId);
+    throwIfStorySurfaceActionCancelled(actionLifecycle);
 
     if (USER_SETTING.DIRECT_DOWNLOAD_STORY) {
       scheduleStoryBatchDownloads(
         highStories,
         STORY_SURFACE.HIGHLIGHT,
         true,
+        actionLifecycle,
       );
     } else {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       IG_createDM(false, true, true);
       createStoryListDOM(highStories, "highlights");
     }
@@ -2914,22 +3414,26 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param  {Boolean}  isPreview - Check if it is need to open new tab
    * @return {void}
    */
-  async function onHighlightsStory(isDownload, isPreview) {
+  async function onHighlightsStory(
+    isDownload,
+    isPreview,
+    actionLifecycle,
+  ) {
     var username = getHighlightsStoryUsername();
 
     if (isDownload) {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       let date = new Date().getTime();
       let timestamp = Math.floor(date / 1000);
       let highlightId = location.href.replace(/\/$/gi, "").split("/").at(-1);
       let highStories;
-
-      updateLoadingBar(true);
 
       if (state.GL_dataCache.highlights[highlightId]) {
         logger("Fetch from memory cache:", highlightId);
         highStories = state.GL_dataCache.highlights[highlightId];
       } else {
         highStories = await getHighlightStories(highlightId);
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         state.GL_dataCache.highlights[highlightId] = highStories;
       }
 
@@ -2975,14 +3479,20 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           ? media.MEDIA_INTENT.PREVIEW
           : media.MEDIA_INTENT.DOWNLOAD,
         {
+          ...createStorySurfaceMediaActionOptions(actionLifecycle),
           defaultTimestamp: timestamp,
+          deferMediaApiRequestFailureAlert: true,
           includeIndex: false,
           logMediaApiError: true,
           swallowMediaApiFailure: true,
           onMediaApiFallback: async () => {
             delete state.GL_dataCache.highlights[responseCacheKey];
             state.tempFetchRateLimit = true;
-            return await onHighlightsStory(true, isPreview);
+            return await onHighlightsStory(
+              true,
+              isPreview,
+              actionLifecycle,
+            );
           },
           onOutput: (context) => {
             if (context.source === "cache") {
@@ -3010,7 +3520,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         state.tempFetchRateLimit = false;
       }
 
-      updateLoadingBar(false);
     } else {
       // Add the stories download button
       if (!$(".IG_DWHISTORY").length) {
@@ -3080,21 +3589,24 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param  {Boolean}  isDownload - Check if it is a download operation
    * @return {void}
    */
-  async function onHighlightsStoryThumbnail(isDownload) {
+  async function onHighlightsStoryThumbnail(
+    isDownload,
+    actionLifecycle,
+  ) {
     if (isDownload) {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       let date = new Date().getTime();
       let timestamp = Math.floor(date / 1000);
       let highlightId = location.href.replace(/\/$/gi, "").split("/").at(-1);
       let username = "";
       let highStories;
 
-      updateLoadingBar(true);
-
       if (state.GL_dataCache.highlights[highlightId]) {
         logger("Fetch from memory cache:", highlightId);
         highStories = state.GL_dataCache.highlights[highlightId];
       } else {
         highStories = await getHighlightStories(highlightId);
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         state.GL_dataCache.highlights[highlightId] = highStories;
       }
 
@@ -3132,15 +3644,20 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         descriptor,
         media.MEDIA_INTENT.THUMBNAIL,
         {
+          ...createStorySurfaceMediaActionOptions(actionLifecycle),
           allowMediaApiForThumbnail: true,
           defaultTimestamp: timestamp,
+          deferMediaApiRequestFailureAlert: true,
           includeIndex: false,
           logMediaApiError: true,
           swallowMediaApiFailure: true,
           onMediaApiFallback: async () => {
             delete state.GL_dataCache.highlights[responseCacheKey];
             state.tempFetchRateLimit = true;
-            return await onHighlightsStoryThumbnail(true);
+            return await onHighlightsStoryThumbnail(
+              true,
+              actionLifecycle,
+            );
           },
           onOutput: (context) => {
             if (context.source === "cache") {
@@ -3168,7 +3685,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         state.tempFetchRateLimit = false;
       }
 
-      updateLoadingBar(false);
     } else {
       setStoryProgressIndexByUsername(
         $(".IG_DWHISTORY").parent(),
@@ -4727,9 +5243,8 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    *
    * @return {void}
    */
-  async function onStoryAll() {
-    updateLoadingBar(true);
-
+  async function onStoryAll(actionLifecycle) {
+    throwIfStorySurfaceActionCancelled(actionLifecycle);
     let username =
       $("body > div section._ac0a header._ac0k ._ac0l a + div a")
         .first()
@@ -4740,12 +5255,20 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         .at(1);
 
     let userInfo = await getUserId(username);
+    throwIfStorySurfaceActionCancelled(actionLifecycle);
     let userId = userInfo.user.pk;
     let stories = await getStories(userId);
+    throwIfStorySurfaceActionCancelled(actionLifecycle);
 
     if (USER_SETTING.DIRECT_DOWNLOAD_STORY) {
-      scheduleStoryBatchDownloads(stories, STORY_SURFACE.STORY);
+      scheduleStoryBatchDownloads(
+        stories,
+        STORY_SURFACE.STORY,
+        false,
+        actionLifecycle,
+      );
     } else {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       IG_createDM(false, true, true);
       createStoryListDOM(stories, "stories");
     }
@@ -4760,7 +5283,12 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param  {Boolean}  isPreview - Check if it is need to open new tab
    * @return {void}
    */
-  async function onStory(isDownload, isForce, isPreview) {
+  async function onStory(
+    isDownload,
+    isForce,
+    isPreview,
+    actionLifecycle,
+  ) {
     var username =
       $("body > div section._ac0a header._ac0k ._ac0l a + div a")
         .first()
@@ -4770,10 +5298,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         .filter((s) => s.length > 0)
         .at(1);
     if (isDownload) {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       let date = new Date().getTime();
       let timestamp = Math.floor(date / 1000);
 
-      updateLoadingBar(true);
       const intent = isPreview
         ? STORY_INTENT.PREVIEW
         : STORY_INTENT.DOWNLOAD;
@@ -4784,8 +5312,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       );
       if (initialMediaApiPolicy.requestMediaApi) {
         let userInfo = await getUserId(username);
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         let userId = userInfo.user.pk;
         let stories = await getStories(userId);
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         const domState = readLegacyStoryDomState();
         const actionContext = createLegacyStoryActionContext(
           STORY_SURFACE.STORY,
@@ -4817,13 +5347,20 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
             ? media.MEDIA_INTENT.PREVIEW
             : media.MEDIA_INTENT.DOWNLOAD,
           {
+            ...createStorySurfaceMediaActionOptions(actionLifecycle),
             defaultTimestamp: timestamp,
+            deferMediaApiRequestFailureAlert: true,
             includeIndex: false,
             logMediaApiError: true,
             swallowMediaApiFailure: true,
             onMediaApiFallback: async () => {
               state.tempFetchRateLimit = true;
-              return await onStory(isDownload, isForce, isPreview);
+              return await onStory(
+                isDownload,
+                isForce,
+                isPreview,
+                actionLifecycle,
+              );
             },
             onOutput: (context) => {
               if (context.source === "cache") {
@@ -4849,7 +5386,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
 
         if (usedImageCache) return;
 
-        updateLoadingBar(false);
         return;
       }
 
@@ -4861,11 +5397,13 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         if (state.GL_dataCache.stories[username] && !isForce) {
           logger("Fetch from memory cache:", username);
           stories = state.GL_dataCache.stories[username];
-        } else {
-          let userInfo = await getUserId(username);
-          let userId = userInfo.user.pk;
-          stories = await getStories(userId);
-          fetchedStories = true;
+          } else {
+            let userInfo = await getUserId(username);
+            throwIfStorySurfaceActionCancelled(actionLifecycle);
+            let userId = userInfo.user.pk;
+            stories = await getStories(userId);
+            throwIfStorySurfaceActionCancelled(actionLifecycle);
+            fetchedStories = true;
           state.GL_dataCache.stories[username] = stories;
         }
 
@@ -4890,7 +5428,12 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         if (!descriptor || descriptor.kind !== "video") {
           if (!fetchedStories) {
             logger("Memory cache not found, try fetch from API:", username);
-            return await onStory(true, true);
+            return await onStory(
+              true,
+              true,
+              undefined,
+              actionLifecycle,
+            );
           }
           alert(_i18n("NO_VID_URL"));
         } else {
@@ -4900,6 +5443,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
               ? media.MEDIA_INTENT.PREVIEW
               : media.MEDIA_INTENT.DOWNLOAD,
             {
+              ...createStorySurfaceMediaActionOptions(actionLifecycle),
               defaultTimestamp: timestamp,
               includeIndex: false,
               replacePreviewHost: false,
@@ -4950,6 +5494,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
             ? media.MEDIA_INTENT.PREVIEW
             : media.MEDIA_INTENT.DOWNLOAD,
           {
+            ...createStorySurfaceMediaActionOptions(actionLifecycle),
             allowNonCanonicalImageCache: true,
             defaultTimestamp: timestamp,
             imageCacheKey: mediaId,
@@ -4970,7 +5515,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       }
 
       state.tempFetchRateLimit = false;
-      updateLoadingBar(false);
     } else {
       // Add the stories download button
       if (!$(".IG_DWSTORY").length) {
@@ -5082,8 +5626,13 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param  {Boolean}  isForce - Check if downloading directly from API instead of cache
    * @return {void}
    */
-  async function onStoryThumbnail(isDownload, isForce) {
+  async function onStoryThumbnail(
+    isDownload,
+    isForce,
+    actionLifecycle,
+  ) {
     if (isDownload) {
+      throwIfStorySurfaceActionCancelled(actionLifecycle);
       // Download stories if it is video
       let date = new Date().getTime();
       let timestamp = Math.floor(date / 1000);
@@ -5093,8 +5642,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           .text() || location.pathname.split("/").at(2);
       let mediaId = null;
 
-      updateLoadingBar(true);
-
       const initialMediaApiPolicy = getStoryMediaApiPolicyInputs(
         USER_SETTING,
         state,
@@ -5102,8 +5649,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       );
       if (initialMediaApiPolicy.requestMediaApi) {
         let userInfo = await getUserId(username);
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         let userId = userInfo.user.pk;
         let stories = await getStories(userId);
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         const domState = readLegacyStoryDomState();
         const actionContext = createLegacyStoryActionContext(
           STORY_SURFACE.STORY,
@@ -5134,14 +5683,20 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           descriptor,
           media.MEDIA_INTENT.THUMBNAIL,
           {
+            ...createStorySurfaceMediaActionOptions(actionLifecycle),
             allowMediaApiForThumbnail: true,
             defaultTimestamp: timestamp,
+            deferMediaApiRequestFailureAlert: true,
             includeIndex: false,
             logMediaApiError: true,
             swallowMediaApiFailure: true,
             onMediaApiFallback: async () => {
               state.tempFetchRateLimit = true;
-              return await onStoryThumbnail(true, isForce);
+              return await onStoryThumbnail(
+                true,
+                isForce,
+                actionLifecycle,
+              );
             },
             onOutput: (context) => {
               if (context.source === "cache") {
@@ -5166,7 +5721,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
 
         if (usedImageCache) return;
 
-        updateLoadingBar(false);
         return;
       }
 
@@ -5177,8 +5731,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         stories = state.GL_dataCache.stories[username];
       } else {
         let userInfo = await getUserId(username);
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         let userId = userInfo.user.pk;
         stories = await getStories(userId);
+        throwIfStorySurfaceActionCancelled(actionLifecycle);
         fetchedStories = true;
       }
 
@@ -5204,7 +5760,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       if (!descriptor) {
         if (!fetchedStories) {
           logger("Memory cache not found, try fetch from API:", username);
-          return await onStoryThumbnail(true, true);
+          return await onStoryThumbnail(true, true, actionLifecycle);
         }
         throw new Error("Cannot resolve the current Story thumbnail.");
       }
@@ -5213,6 +5769,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         descriptor,
         media.MEDIA_INTENT.THUMBNAIL,
         {
+          ...createStorySurfaceMediaActionOptions(actionLifecycle),
           defaultTimestamp: timestamp,
           includeIndex: false,
           resolveMissingOwner: false,
@@ -5222,7 +5779,6 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         },
       );
       state.tempFetchRateLimit = false;
-      updateLoadingBar(false);
     } else {
       if ($("body > div div.IG_DWSTORY").parent().find("video[class]").length) {
         // Add the stories download button
@@ -5330,31 +5886,40 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param  {String}  username
    * @return {Promise<Integer>}
    */
-  function getUserId(username) {
+  async function getUserId(username) {
     const getURL = `https://www.instagram.com/web/search/topsearch/?query=${username}`;
 
-    return jsonRequest({ url: getURL, detectApiErrors: false })
-      .then((obj) => {
-        // Fix search issue by Discord: sno_w_
-        const result = obj?.users?.find(
-          (pos) =>
-            pos.user.username?.toLowerCase() === username?.toLowerCase(),
-        );
+    let obj;
+    try {
+      obj = await jsonRequest({ url: getURL, detectApiErrors: false });
+    } catch (err) {
+      logger("getUserId()", "reject", err);
+      if (isStoryActionAbort(err)) throw err;
 
-        if (result != null) {
-          logger("getUserId()", result);
-          return result;
-        }
+      // Keep the established secondary profile lookup for ordinary failures.
+      // Safari policy denials are normally recovered inside jsonRequest() by
+      // retrying the same endpoint through the authenticated page context.
+      return await getUserIdWithAgent(username);
+    }
 
-        return getUserIdWithAgent(username).catch((err) => {
-          alert("Cannot find user info from getUserId()");
-          throw err;
-        });
-      })
-      .catch((err) => {
-        logger("getUserId()", "reject", err);
-        throw err;
-      });
+    // Fix search issue by Discord: sno_w_
+    const result = obj?.users?.find(
+      (pos) =>
+        pos.user.username?.toLowerCase() === username?.toLowerCase(),
+    );
+
+    if (result != null) {
+      logger("getUserId()", result);
+      return result;
+    }
+
+    try {
+      return await getUserIdWithAgent(username);
+    } catch (err) {
+      alert("Cannot find user info from getUserId()");
+      if (err && typeof err === "object") err.alreadyReported = true;
+      throw err;
+    }
   }
 
   /**
@@ -6360,8 +6925,8 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     sourceType,
     timestamp,
     shortcode,
+    operationOptions = createDownloadOperationOptions(),
   ) {
-    const downloadOperationOptions = createDownloadOperationOptions();
     return await dashExecutionCoordinator.execute({
       videoUrl,
       audioUrl,
@@ -6370,7 +6935,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         sourceType,
         timestamp,
         shortcode,
-        downloadOperationOptions,
+        downloadOperationOptions: operationOptions,
       },
     });
   }
@@ -6392,8 +6957,11 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     shortcode,
     isPreview,
     index,
+    operationOptions,
+    throwIfCancelled = () => {},
   }) {
     try {
+      throwIfCancelled();
       if (!USER_SETTING.PREFER_DASH_MANIFEST) return false;
       if (!USER_SETTING.FORCE_RESOURCE_VIA_MEDIA) return false;
       if (!mediaItem?.video_dash_manifest) return false;
@@ -6426,6 +6994,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       });
 
       if (isPreview) {
+        throwIfCancelled();
         openNewTab(vUrl);
         return true;
       }
@@ -6439,7 +7008,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           filetype: "mp4",
           shortcode,
           index,
-        });
+        }, operationOptions);
       }
 
       logger("[DASH]", "download mode -> DASH video+audio");
@@ -6450,8 +7019,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         sourceType,
         timestamp,
         shortcode,
+        operationOptions,
       );
     } catch (e) {
+      if (isStoryActionAbort(e)) throw e;
       logger(
         "[DASH]",
         "tryHandleDashFromMediaItem failed -> fallback",
@@ -6828,6 +7399,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param {Boolean} [actionOptions.allowMediaApiForThumbnail]
    * @param {Boolean} [actionOptions.allowNonCanonicalImageCache]
    * @param {Boolean} [actionOptions.dashBeforeMediaApi]
+   * @param {Boolean} [actionOptions.deferMediaApiRequestFailureAlert]
    * @param {String|Number|null} [actionOptions.imageCacheKey]
    * @param {Boolean} [actionOptions.includeIndex]
    * @param {Boolean} [actionOptions.logMediaApiError]
@@ -6846,6 +7418,8 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param {Boolean} [actionOptions.useDash]
    * @param {Boolean} [actionOptions.useDashForPreview]
    * @param {Boolean} [actionOptions.markMediaApiFallback]
+   * @param {{signal?: AbortSignal}} [actionOptions.operationOptions]
+   * @param {Function} [actionOptions.throwIfCancelled]
    * @return {media.MediaActionService}
    */
   function createLegacyMediaActionService(metadata, actionOptions = {}) {
@@ -6853,6 +7427,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     let dashResult;
     let fallbackActionHandled = false;
     let fallbackActionResult;
+    const throwIfCancelled =
+      typeof actionOptions.throwIfCancelled === "function"
+        ? actionOptions.throwIfCancelled
+        : () => {};
 
     function resolveOutputOption(name, context, fallback) {
       if (!Object.prototype.hasOwnProperty.call(actionOptions, name)) {
@@ -6937,6 +7515,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     }
 
     function notifyActionOutput(context) {
+      throwIfCancelled();
       actionOptions.onOutput?.(context);
     }
 
@@ -6952,19 +7531,23 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           return getImageFromCache(cacheKey);
         },
         async resolveMedia({ descriptor, intent }) {
+          throwIfCancelled();
           mediaApiAttempted = true;
           updateLoadingBar(true);
           let result;
           try {
             result = await getMediaInfo(descriptor.mediaId);
           } catch (cause) {
+            if (isStoryActionAbort(cause)) throw cause;
             const error = new Error("Media API request failed.");
             error.cause = cause;
-            error.alreadyReported = true;
+            error.alreadyReported =
+              cause === -1 || cause?.alreadyReported === true;
             throw error;
           } finally {
             updateLoadingBar(false);
           }
+          throwIfCancelled();
 
           if (result?.status !== "ok") {
             const error = new Error(
@@ -6995,6 +7578,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           return resolvePreviewDashDescriptor(resolved, intent);
         },
         async resolveDash(context) {
+          throwIfCancelled();
           const { descriptor, originalDescriptor } = context;
           const cachedMediaItem =
             state.GL_mediaDataCache[descriptor.mediaId];
@@ -7030,6 +7614,8 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
             ),
             isPreview: false,
             index: metadata.index,
+            operationOptions: actionOptions.operationOptions,
+            throwIfCancelled,
           });
           if (!handled) return null;
 
@@ -7051,6 +7637,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
                 context,
                 media.MEDIA_INTENT.DOWNLOAD,
               ),
+              actionOptions.operationOptions,
             );
           },
           preview(context) {
@@ -7074,6 +7661,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
                 context,
                 media.MEDIA_INTENT.THUMBNAIL,
               ),
+              actionOptions.operationOptions,
             );
           },
         },
@@ -7107,17 +7695,24 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           if (
             context.stage === media.MEDIA_ACTION_STAGE.MEDIA_API &&
             !context.willFallback &&
-            !error?.alreadyReported
+            !error?.alreadyReported &&
+            !(
+              actionOptions.deferMediaApiRequestFailureAlert === true &&
+              !error?.response
+            )
           ) {
             alert(
               "Fetch failed from Media API. API response message: " +
                 error.message,
             );
+            error.alreadyReported = true;
           }
         },
       },
       {
         dashBeforeMediaApi: actionOptions.dashBeforeMediaApi === true,
+        failOpenOnCacheError: (error) => !isStoryActionAbort(error),
+        failOpenOnDashError: (error) => !isStoryActionAbort(error),
         useImageCache: ({ descriptor }) =>
           actionOptions.useImageCache !== false &&
           USER_SETTING.CAPTURE_IMAGE_VIA_MEDIA_CACHE &&
@@ -7144,7 +7739,8 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           ),
         failOpenOnMediaApiError: (error) =>
           USER_SETTING.FALLBACK_TO_BLOB_FETCH_IF_MEDIA_API_THROTTLED &&
-          !error?.alreadyReported,
+          !error?.alreadyReported &&
+          !isStoryActionAbort(error),
       },
     );
   }
@@ -7158,7 +7754,9 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param {String} intent
    * @param {Object} [actionOptions]
    * @param {Number} [actionOptions.defaultTimestamp]
+   * @param {{signal?: AbortSignal}} [actionOptions.operationOptions]
    * @param {Boolean} [actionOptions.resolveMissingOwner]
+   * @param {Function} [actionOptions.throwIfCancelled]
    * @param {String|Number|null} [actionOptions.uid]
    * @return {Promise<*>}
    */
@@ -7167,6 +7765,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     intent,
     actionOptions = {},
   ) {
+    actionOptions.throwIfCancelled?.();
     const sourceType =
       descriptor.sourceType ||
       (descriptor.kind === "video" ? "video" : "photo");
@@ -7191,6 +7790,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           err.message,
         );
       });
+      actionOptions.throwIfCancelled?.();
       if (username == null) username = "NONE";
     }
 
@@ -7212,6 +7812,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       uid: actionOptions.uid,
     }, actionOptions);
     try {
+      actionOptions.throwIfCancelled?.();
       return await actionService.execute(actionDescriptor, intent);
     } catch (error) {
       if (
@@ -8055,19 +8656,31 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     );
 
     // Running if user left-click download icon in stories
-    listenApplicationJQuery($("body"), "click", ".IG_DWSTORY", function () {
-      fireAndReport(() => onStory(true), "onStory()");
+    listenApplicationJQuery($("body"), "click", ".IG_DWSTORY", function (e) {
+      consumeInjectedClick(e);
+      return runStorySurfaceAction(
+        (actionLifecycle) =>
+          onStory(true, undefined, undefined, actionLifecycle),
+        "onStory()",
+      );
     });
 
     // Running if user left-click all download icon in stories
-    listenApplicationJQuery($("body"), "click", ".IG_DWSTORY_ALL", function () {
-      fireAndReport(() => onStoryAll(), "onStoryAll()");
+    listenApplicationJQuery($("body"), "click", ".IG_DWSTORY_ALL", function (e) {
+      consumeInjectedClick(e);
+      return runStorySurfaceAction(
+        (actionLifecycle) => onStoryAll(actionLifecycle),
+        "onStoryAll()",
+      );
     });
 
     // Running if user left-click 'open in new tab' icon in stories
     listenApplicationJQuery($("body"), "click", ".IG_DWNEWTAB", function (e) {
-      e.preventDefault();
-      fireAndReport(() => onStory(true, true, true), "onStory()");
+      consumeInjectedClick(e);
+      return runStorySurfaceAction(
+        (actionLifecycle) => onStory(true, true, true, actionLifecycle),
+        "onStory()",
+      );
     });
 
     // Running if user left-click download thumbnail icon in stories
@@ -8075,18 +8688,22 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       $("body"),
       "click",
       ".IG_DWSTORY_THUMBNAIL",
-      function () {
-        fireAndReport(
-          () => onStoryThumbnail(true),
+      function (e) {
+        consumeInjectedClick(e);
+        return runStorySurfaceAction(
+          (actionLifecycle) =>
+            onStoryThumbnail(true, undefined, actionLifecycle),
           "onStoryThumbnail()",
         );
       },
     );
 
     // Running if user left-click download icon in highlight stories
-    listenApplicationJQuery($("body"), "click", ".IG_DWHISTORY", function () {
-      fireAndReport(
-        () => onHighlightsStory(true),
+    listenApplicationJQuery($("body"), "click", ".IG_DWHISTORY", function (e) {
+      consumeInjectedClick(e);
+      return runStorySurfaceAction(
+        (actionLifecycle) =>
+          onHighlightsStory(true, undefined, actionLifecycle),
         "onHighlightsStory()",
       );
     });
@@ -8096,9 +8713,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       $("body"),
       "click",
       ".IG_DWHISTORY_ALL",
-      function () {
-        fireAndReport(
-          () => onHighlightsStoryAll(),
+      function (e) {
+        consumeInjectedClick(e);
+        return runStorySurfaceAction(
+          (actionLifecycle) => onHighlightsStoryAll(actionLifecycle),
           "onHighlightsStoryAll()",
         );
       },
@@ -8106,9 +8724,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
 
     // Running if user left-click 'open in new tab' icon in highlight stories
     listenApplicationJQuery($("body"), "click", ".IG_DWHINEWTAB", function (e) {
-      e.preventDefault();
-      fireAndReport(
-        () => onHighlightsStory(true, true),
+      consumeInjectedClick(e);
+      return runStorySurfaceAction(
+        (actionLifecycle) =>
+          onHighlightsStory(true, true, actionLifecycle),
         "onHighlightsStory()",
       );
     });
@@ -8118,9 +8737,11 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       $("body"),
       "click",
       ".IG_DWHISTORY_THUMBNAIL",
-      function () {
-        fireAndReport(
-          () => onHighlightsStoryThumbnail(true),
+      function (e) {
+        consumeInjectedClick(e);
+        return runStorySurfaceAction(
+          (actionLifecycle) =>
+            onHighlightsStoryThumbnail(true, actionLifecycle),
           "onHighlightsStoryThumbnail()",
         );
       },
