@@ -1,0 +1,42 @@
+{
+  "status": "ok",
+  "data": {
+    "shortcode_media": {
+      "__typename": "GraphSidecar",
+      "id": "300000000000000010",
+      "shortcode": "Carousel12",
+      "taken_at_timestamp": 1700000100,
+      "owner": {
+        "id": "100000000000000001",
+        "username": "fixture_user"
+      },
+      "edge_sidecar_to_children": {
+        "edges": [
+          {
+            "node": {
+              "__typename": "GraphImage",
+              "id": "300000000000000011",
+              "display_resources": [
+                { "src": "https://scontent.cdninstagram.com/carousel-1-small.jpg", "config_width": 320, "config_height": 400 },
+                { "src": "https://scontent.cdninstagram.com/carousel-1-medium.jpg", "config_width": 640, "config_height": 800 },
+                { "src": "https://scontent.cdninstagram.com/carousel-1-full.jpg", "config_width": 1080, "config_height": 1350 }
+              ]
+            }
+          },
+          {
+            "node": {
+              "__typename": "GraphVideo",
+              "id": "300000000000000012",
+              "video_url": "https://scontent.cdninstagram.com/carousel-2.mp4",
+              "display_resources": [
+                { "src": "https://scontent.cdninstagram.com/carousel-2-small.jpg", "config_width": 320, "config_height": 568 },
+                { "src": "https://scontent.cdninstagram.com/carousel-2-medium.jpg", "config_width": 640, "config_height": 1136 },
+                { "src": "https://scontent.cdninstagram.com/carousel-2-full.jpg", "config_width": 1080, "config_height": 1920 }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

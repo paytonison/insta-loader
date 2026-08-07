@@ -1,0 +1,70 @@
+{
+  "image": {
+    "pk": "api-image-1",
+    "code": "APIimage1",
+    "taken_at": 1700000101,
+    "owner": { "username": "api_owner" },
+    "image_versions2": {
+      "candidates": [
+        {
+          "width": 1080,
+          "height": 1080,
+          "url": "https://cdn.example.test/api-image-transformed.jpg?stp=dst-jpg_e35_s1080x1080"
+        },
+        {
+          "width": 720,
+          "height": 720,
+          "url": "https://cdn.example.test/api-image-clean.jpg?stp=dst-jpg"
+        }
+      ]
+    }
+  },
+  "video": {
+    "pk": "api-video-1",
+    "code": "APIvideo1",
+    "taken_at": 1700000102,
+    "user": { "username": "api_user_fallback" },
+    "video_versions": [
+      { "width": 720, "height": 1280, "url": "https://cdn.example.test/api-video-first.mp4" },
+      { "width": 1080, "height": 1920, "url": "https://cdn.example.test/api-video-second.mp4" }
+    ],
+    "video_dash_manifest": "<MPD>api-video</MPD>",
+    "image_versions2": {
+      "candidates": [
+        { "width": 360, "height": 640, "url": "https://cdn.example.test/api-video-thumb-first.jpg" },
+        { "width": 720, "height": 1280, "url": "https://cdn.example.test/api-video-thumb-second.jpg" }
+      ]
+    }
+  },
+  "carousel": {
+    "pk": "api-carousel-1",
+    "code": "APIcar01",
+    "taken_at": 1700000103,
+    "owner": { "username": "carousel_owner" },
+    "carousel_media": [
+      {
+        "pk": "api-child-image",
+        "taken_at": 1700000111,
+        "image_versions2": {
+          "candidates": [
+            { "width": 640, "height": 640, "url": "https://cdn.example.test/api-child-image-640.jpg" },
+            { "width": 1080, "height": 1080, "url": "https://cdn.example.test/api-child-image-1080.jpg" }
+          ]
+        }
+      },
+      {
+        "pk": "api-child-video",
+        "taken_at": 1700000112,
+        "video_versions": [
+          { "width": 720, "height": 1280, "url": "https://cdn.example.test/api-child-video.mp4" }
+        ],
+        "video_dash_manifest": "<MPD>api-child-video</MPD>",
+        "image_versions2": {
+          "candidates": [
+            { "width": 360, "height": 640, "url": "https://cdn.example.test/api-child-video-thumb.jpg" }
+          ]
+        }
+      }
+    ]
+  }
+}

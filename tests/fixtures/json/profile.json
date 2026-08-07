@@ -1,0 +1,11 @@
+{
+  "status": "ok",
+  "data": {
+    "user": {
+      "id": "100000000000000001",
+      "pk": "100000000000000001",
+      "username": "fixture_user",
+      "profile_pic_url_hd": "https://scontent.cdninstagram.com/profile-hd.jpg"
+    }
+  }
+}

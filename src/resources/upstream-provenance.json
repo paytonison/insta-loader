@@ -1,0 +1,29 @@
+{
+  "repository": "https://github.com/SN-Koarashi/ig-helper",
+  "branch": "master",
+  "commit": "44650f9dbe9d977481016a678c549489c081b648",
+  "commitUrl": "https://github.com/SN-Koarashi/ig-helper/commit/44650f9dbe9d977481016a678c549489c081b648",
+  "verifiedAt": "2026-08-07T04:18:27Z",
+  "resources": {
+    "internalCss": {
+      "sourcePath": "style.css",
+      "movingUrl": "https://cdn.jsdelivr.net/gh/SN-Koarashi/ig-helper@master/style.css",
+      "immutableUrl": "https://cdn.jsdelivr.net/gh/SN-Koarashi/ig-helper@44650f9dbe9d977481016a678c549489c081b648/style.css",
+      "gitBlob": "29694b984f868ac02e1951835483efb387b0fdc1",
+      "sha256": "5b0e305e9f177d3371e4fd0e367c0345c13f895c0d0198d326cdb3f4ff80b311",
+      "bytes": 14931
+    },
+    "localeManifest": {
+      "sourcePath": "locale/manifest.json",
+      "movingUrl": "https://cdn.jsdelivr.net/gh/SN-Koarashi/ig-helper@master/locale/manifest.json",
+      "immutableUrl": "https://cdn.jsdelivr.net/gh/SN-Koarashi/ig-helper@44650f9dbe9d977481016a678c549489c081b648/locale/manifest.json",
+      "gitBlob": "c4f9167df419370397f05725cfe159e44d9850d1",
+      "sha256": "d4c2fc51da96bc4af2953639a6cb8f90a4dc99e93495321b6a64822e617fa427",
+      "bytes": 624
+    }
+  },
+  "translations": {
+    "immutableBaseUrl": "https://cdn.jsdelivr.net/gh/SN-Koarashi/ig-helper@44650f9dbe9d977481016a678c549489c081b648/locale/translations",
+    "englishSource": "Bundled from insta-loader.user.js because the upstream commit has no locale/translations/en-US.json file."
+  }
+}

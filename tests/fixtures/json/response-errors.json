@@ -1,0 +1,30 @@
+{
+  "loginRedirect": {
+    "status": 200,
+    "finalUrl": "https://www.instagram.com/accounts/login/",
+    "body": "<html><title>Login</title></html>"
+  },
+  "throttled": {
+    "status": 429,
+    "body": { "status": "fail", "message": "Please wait a few minutes before trying again." }
+  },
+  "apiFailure": {
+    "status": 200,
+    "body": {
+      "status": "fail",
+      "message": "feedback_required",
+      "feedback_message": "Try again later."
+    }
+  },
+  "malformed": {
+    "status": 200,
+    "body": "{not-json"
+  },
+  "network": {
+    "event": "error",
+    "error": { "error": "fixture network failure" }
+  },
+  "timeout": {
+    "event": "timeout"
+  }
+}

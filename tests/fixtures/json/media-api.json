@@ -1,0 +1,22 @@
+{
+  "status": "ok",
+  "items": [
+    {
+      "pk": "300000000000000001",
+      "code": "Post12345",
+      "taken_at": 1700000000,
+      "original_width": 1080,
+      "original_height": 1350,
+      "owner": {
+        "pk": "100000000000000001",
+        "username": "fixture_user"
+      },
+      "image_versions2": {
+        "candidates": [
+          { "url": "https://scontent.cdninstagram.com/v/t51.2885-15/post-full.jpg", "width": 1080, "height": 1350 },
+          { "url": "https://scontent.cdninstagram.com/v/t51.2885-15/post-medium.jpg", "width": 640, "height": 800 }
+        ]
+      }
+    }
+  ]
+}

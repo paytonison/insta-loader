@@ -1,0 +1,65 @@
+{
+  "graphImage": {
+    "__typename": "GraphImage",
+    "id": "legacy-image-1",
+    "shortcode": "IMGcode01",
+    "taken_at_timestamp": 1700000001,
+    "owner": { "username": "legacy_owner" },
+    "display_url": "https://cdn.example.test/legacy-image-fallback.jpg",
+    "display_resources": [
+      { "config_width": 320, "src": "https://cdn.example.test/legacy-image-320.jpg" },
+      { "config_width": 640, "src": "https://cdn.example.test/legacy-image-640.jpg" },
+      { "config_width": 1080, "src": "https://cdn.example.test/legacy-image-1080.jpg" }
+    ]
+  },
+  "graphVideo": {
+    "__typename": "GraphVideo",
+    "id": "legacy-video-1",
+    "shortcode": "VIDcode01",
+    "taken_at_timestamp": 1700000002,
+    "owner": { "username": "legacy_owner" },
+    "video_url": "https://cdn.example.test/legacy-video.mp4",
+    "video_dash_manifest": "<MPD>legacy-video</MPD>",
+    "display_resources": [
+      { "config_width": 320, "src": "https://cdn.example.test/legacy-video-320.jpg" },
+      { "config_width": 640, "src": "https://cdn.example.test/legacy-video-640.jpg" },
+      { "config_width": 1080, "src": "https://cdn.example.test/legacy-video-1080.jpg" }
+    ]
+  },
+  "graphSidecar": {
+    "__typename": "GraphSidecar",
+    "id": "legacy-sidecar-1",
+    "shortcode": "SIDEcode1",
+    "taken_at_timestamp": 1700000003,
+    "owner": { "username": "sidecar_owner" },
+    "edge_sidecar_to_children": {
+      "edges": [
+        {
+          "node": {
+            "__typename": "GraphVideo",
+            "id": "legacy-child-video",
+            "taken_at_timestamp": 1,
+            "video_url": "https://cdn.example.test/legacy-child-video.mp4",
+            "video_dash_manifest": "<MPD>sidecar-child</MPD>",
+            "display_resources": [
+              { "config_width": 320, "src": "https://cdn.example.test/legacy-child-video-320.jpg" },
+              { "config_width": 640, "src": "https://cdn.example.test/legacy-child-video-640.jpg" }
+            ]
+          }
+        },
+        {
+          "node": {
+            "__typename": "GraphImage",
+            "id": "legacy-child-image",
+            "taken_at_timestamp": 2,
+            "display_resources": [
+              { "config_width": 320, "src": "https://cdn.example.test/legacy-child-image-320.jpg" },
+              { "config_width": 640, "src": "https://cdn.example.test/legacy-child-image-640.jpg" },
+              { "config_width": 1080, "src": "https://cdn.example.test/legacy-child-image-1080.jpg" }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

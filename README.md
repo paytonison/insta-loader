@@ -128,6 +128,12 @@ Important settings include:
   "shared this with you" dialog on shared profile links**: remove common
   Instagram interstitials.
 
+When both post direct-download settings are enabled, the ordinary **Download**
+action follows **Directly Download the Visible Resources in the Post** first.
+For a multi-item post, the dedicated double-chevron **Download All Resources**
+control is shown when visible-resource downloading is enabled and automatic
+all-resource downloading is disabled.
+
 Right-click **Automatically Rename Files** in the settings dialog to edit the
 filename template. Right-click **Modify Video Volume** to set the stored volume.
 
@@ -199,11 +205,15 @@ commands, notifications, downloads, tab opening, and cross-origin requests. It
 connects to Instagram CDN/API hosts, `raw.githubusercontent.com`, and
 `cdn.jsdelivr.net`.
 
-External runtime resources are loaded from:
+Runtime dependencies and resources are provided as follows:
 
 - jQuery 3.7.1 from `code.jquery.com`.
 - Mediabunny 1.34.5 from `cdn.jsdelivr.net`.
-- Original IG Helper CSS and locale files from `cdn.jsdelivr.net`.
+- Original IG Helper CSS, the locale manifest, and the English dictionary are
+  bundled into the generated userscript from reviewed source files.
+- Supported non-English dictionaries are loaded from an immutable,
+  commit-pinned IG Helper URL on `cdn.jsdelivr.net`; missing or malformed locale
+  data falls back to the bundled English dictionary.
 
 ## Troubleshooting
 
@@ -225,26 +235,118 @@ Useful checks:
 
 ## Development
 
-This repository intentionally keeps the userscript as a single file:
-
-```text
-insta-loader.user.js
-```
-
-After editing the script, run a syntax check:
+Development requires Node.js 20.19 or newer and npm. Install the exact locked
+toolchain dependencies with:
 
 ```sh
-node --check insta-loader.user.js
+npm ci
 ```
 
-For documentation-only edits, `git diff --check` is enough to catch whitespace
-problems:
+### Source and generated artifact
+
+The source of truth lives under `src/`. `src/index.js` is the esbuild entry
+point, `src/userscript.meta.txt` owns the userscript metadata, and core
+services, media helpers, local resources, localization, and the compatibility
+runtime live in their corresponding subdirectories.
+
+`insta-loader.user.js` remains the single installable userscript at the
+repository root, but it is now a committed generated artifact. Do not edit it
+directly. Build it from the modular source with:
 
 ```sh
-git diff --check
+npm run build
 ```
 
-Static checks are not a substitute for a live Instagram smoke test. For changes
-that touch media detection, downloads, stories, Reels, or the image viewer,
-install the local script in the userscript manager and verify the affected
-control on a real Instagram page.
+The build targets Safari 15.4, emits one classic IIFE with no runtime module
+imports, and places the Tampermonkey metadata block at the first byte of the
+file. CSS and reviewed JSON resources are bundled into that artifact.
+
+Use the non-writing consistency and determinism checks when reviewing source or
+generated-file changes:
+
+```sh
+npm run check:generated
+npm run check:determinism
+```
+
+`check:generated` compares an in-memory build with the committed root file.
+`check:determinism` builds twice and requires the two outputs to be
+byte-identical.
+
+### Tests and fixtures
+
+Unit and DOM characterization tests run with Vitest:
+
+```sh
+npm test
+```
+
+Focused tests can be selected by path, for example:
+
+```sh
+npx vitest run tests/unit/core
+npx vitest run tests/characterization
+```
+
+Sanitized Instagram-shaped HTML and JSON fixtures live under `tests/fixtures`.
+They cover posts, carousels, Stories, Highlights, profiles, standalone Reels,
+the plural Reels feed, API responses, redirects, throttling, and malformed
+responses. Fixtures must never contain login cookies, credentials,
+authenticated response headers, private account data, or private media.
+
+Browser fixture tests use Playwright's Chromium, Firefox, and WebKit projects.
+Install those browser runtimes once, then run the browser suite:
+
+```sh
+npx playwright install chromium firefox webkit
+npm run test:browser
+```
+
+Run the complete local validation path with:
+
+```sh
+npm run validate
+```
+
+This rebuilds the userscript, verifies generated-file consistency and
+determinism, checks userscript syntax and source linting, runs Vitest and
+Playwright, and checks the working diff for whitespace errors. The Playwright
+browser runtimes must already be installed.
+
+Individual low-level checks remain available when narrowing a failure:
+
+```sh
+npm run check:syntax
+npm run lint
+npm run check:whitespace
+```
+
+### Release gate
+
+Automated checks are necessary, but WebKit fixture coverage is not an
+authenticated Safari/Tampermonkey smoke test. Before publishing a generated
+`insta-loader.user.js`:
+
+1. Run `npm ci`, install the three Playwright browser runtimes, and run
+   `npm run validate`.
+2. Confirm the committed root userscript matches `src/`, begins with the
+   metadata block, declares Safari 15.4 or newer, and contains no development
+   imports.
+3. Install that exact generated root file in Tampermonkey on Safari while
+   authenticated to Instagram.
+4. Verify a single-image post, an ordinary video post, and a mixed carousel.
+   Exercise visible download, all-resource download, New Tab, Thumbnail, Image
+   Viewer, selected-batch download, and all-batch download.
+5. Verify current-item and all-item actions for both Stories and Highlights,
+   plus profile-avatar download.
+6. Verify maximum-quality playback on a standalone Reel and the five-second
+   fail-open path back to Instagram's native playback.
+7. Scroll through at least eleven items in the plural `/reels/` feed, then
+   reverse direction. Confirm Instagram retains native `blob:` playback and the
+   userscript performs no quality-source handoff there.
+8. Reload and navigate through Instagram's SPA routes to confirm settings and
+   hotkeys persist without duplicated controls or actions.
+
+Do not publish based only on syntax, Vitest, or Playwright results. Record any
+part of the authenticated Safari matrix that could not be exercised, and do not
+commit cookies, credentials, private responses, or captured private media.

@@ -1,0 +1,21 @@
+{
+  "status": "ok",
+  "items": [
+    {
+      "pk": "300000000000000301",
+      "code": "FeedReel1",
+      "owner": { "username": "fixture_user" },
+      "video_versions": [
+        { "url": "https://scontent.cdninstagram.com/feed-reel-1.mp4", "width": 1080, "height": 1920 }
+      ]
+    },
+    {
+      "pk": "300000000000000302",
+      "code": "FeedReel2",
+      "owner": { "username": "fixture_user" },
+      "video_versions": [
+        { "url": "https://scontent.cdninstagram.com/feed-reel-2.mp4", "width": 1080, "height": 1920 }
+      ]
+    }
+  ]
+}

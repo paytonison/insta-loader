@@ -1,0 +1,49 @@
+{
+  "xdt_api__v1__media__shortcode__web_info": {
+    "items": [
+      {
+        "original_width": 1080,
+        "original_height": 1920,
+        "video_url": "https://cdn.example.test/unused-fallback.mp4",
+        "video_versions": [
+          {
+            "width": 720,
+            "height": 2560,
+            "bandwidth": 9000000,
+            "url": "https://cdn.example.test/tall-720.mp4"
+          },
+          {
+            "width": 1080,
+            "height": 1080,
+            "bitrate": 2000000,
+            "url": "https://cdn.example.test/square-1080-low.mp4"
+          },
+          {
+            "config_width": "1080",
+            "config_height": "1080",
+            "video_bandwidth": "4000000",
+            "src": "https://cdn.example.test/square-1080-high.mp4"
+          },
+          {
+            "width": 1080,
+            "height": 1080,
+            "bandwidth": 4000000,
+            "url": "https://cdn.example.test/square-1080-high.mp4"
+          },
+          {
+            "width": 2160,
+            "height": 3840,
+            "bandwidth": 12000000,
+            "url": "http://cdn.example.test/insecure.mp4"
+          },
+          {
+            "width": 2160,
+            "height": 3840,
+            "bandwidth": 12000000,
+            "url": "not a URL"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "data": {
+    "xdt_api__v1__media__shortcode__web_info": {
+      "items": [
+        {
+          "pk": "300000000000000020",
+          "code": "Standalone1",
+          "taken_at": 1700000200,
+          "original_width": 1080,
+          "original_height": 1920,
+          "owner": {
+            "pk": "100000000000000001",
+            "username": "fixture_user"
+          },
+          "image_versions2": {
+            "candidates": [
+              { "url": "https://scontent.cdninstagram.com/reel-poster.jpg", "width": 1080, "height": 1920 }
+            ]
+          },
+          "video_versions": [
+            { "url": "https://scontent.cdninstagram.com/reel-1080.mp4", "width": 1080, "height": 1920, "bandwidth": 4500000 },
+            { "url": "https://scontent.cdninstagram.com/reel-720.mp4", "width": 720, "height": 1280, "bandwidth": 2200000 }
+          ]
+        }
+      ]
+    }
+  }
+}

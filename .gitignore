@@ -16,3 +16,9 @@ Icon
 .Trashes
 .VolumeIcon.icns
 .com.apple.timemachine.donotpresent
+
+### Node.js tooling
+node_modules/
+coverage/
+playwright-report/
+test-results/

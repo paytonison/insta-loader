@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+  <Period>
+    <AdaptationSet contentType="video" mimeType="video/mp4" codecs="avc1.640028">
+      <Representation id="video-720" bandwidth="4000000" width="1280" height="720">
+        <BaseURL>https://cdn.example.test/video-720.mp4</BaseURL>
+      </Representation>
+      <Representation id="video-1080-low" bandwidth="2200000" width="1920" height="1080">
+        <BaseURL>https://cdn.example.test/video-1080-low.mp4</BaseURL>
+      </Representation>
+      <Representation id="video-1080-best" bandwidth="5200000" width="1920" height="1080">
+        <BaseURL>https://cdn.example.test/video-1080-best.mp4</BaseURL>
+      </Representation>
+      <Representation id="video-http-2160" bandwidth="9000000" width="3840" height="2160">
+        <BaseURL>http://cdn.example.test/video-2160.mp4</BaseURL>
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet contentType="audio" mimeType="audio/mp4" codecs="mp4a.40.2">
+      <Representation id="audio-128" bandwidth="128000">
+        <BaseURL>https://cdn.example.test/audio-128.m4a</BaseURL>
+      </Representation>
+      <Representation id="audio-256" bandwidth="256000">
+        <BaseURL>https://cdn.example.test/audio-256.m4a</BaseURL>
+      </Representation>
+      <Representation id="audio-http" bandwidth="999000">
+        <BaseURL>http://cdn.example.test/audio-insecure.m4a</BaseURL>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>

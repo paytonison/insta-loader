@@ -1,0 +1,32 @@
+{
+  "status": "ok",
+  "data": {
+    "reels_media": [
+      {
+        "id": "Highlight1",
+        "owner": { "id": "100000000000000001", "username": "fixture_user" },
+        "items": [
+          {
+            "id": "300000000000000201",
+            "is_video": false,
+            "taken_at_timestamp": 1700086400,
+            "display_resources": [
+              { "src": "https://scontent.cdninstagram.com/highlight-1.jpg", "config_width": 1080, "config_height": 1920 }
+            ]
+          },
+          {
+            "id": "300000000000000202",
+            "is_video": true,
+            "taken_at_timestamp": 1700086460,
+            "display_resources": [
+              { "src": "https://scontent.cdninstagram.com/highlight-2-poster.jpg", "config_width": 1080, "config_height": 1920 }
+            ],
+            "video_resources": [
+              { "src": "https://scontent.cdninstagram.com/highlight-2.mp4", "config_width": 1080, "config_height": 1920 }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
