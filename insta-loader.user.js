@@ -6147,7 +6147,7 @@
       this.register(
         "DONATE",
         "d",
-        () => this.environment.openInTab("https://ko-fi.com/snkoarashi", {
+        () => this.environment.openInTab("https://ko-fi.com/paytonison", {
           active: true
         })
       );

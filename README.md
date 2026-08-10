@@ -364,6 +364,11 @@ Do not publish based only on syntax, Vitest, or Playwright results. Record any
 part of the authenticated Safari matrix that could not be exercised, and do not
 commit cookies, credentials, private responses, or captured private media.
 
+## Support
+
+If you find `insta-loader` useful, you can support its development on
+[Ko-fi](https://ko-fi.com/paytonison).
+
 ## License
 
 `insta-loader` is distributed under `GPL-3.0-only`, matching the upstream IG

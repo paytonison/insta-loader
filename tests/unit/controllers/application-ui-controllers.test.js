@@ -106,7 +106,7 @@ describe("MenuController", () => {
     expect(actions.checkForUpdate).toHaveBeenCalledOnce();
     expect(actions.reload).toHaveBeenCalledOnce();
     expect(environment.openInTab).toHaveBeenCalledWith(
-      "https://ko-fi.com/snkoarashi",
+      "https://ko-fi.com/paytonison",
       { active: true },
     );
 

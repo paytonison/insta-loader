@@ -79,7 +79,7 @@ export class MenuController {
     this.register("SETTING", "w", this.showSettings);
     this.register("HOTKEY_KEY_SETTINGS_KEY", "q", this.showHotkeySettings);
     this.register("DONATE", "d", () =>
-      this.environment.openInTab("https://ko-fi.com/snkoarashi", {
+      this.environment.openInTab("https://ko-fi.com/paytonison", {
         active: true,
       }),
     );
