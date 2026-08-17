@@ -43,12 +43,16 @@ afterEach(() => {
 function storyHtml({
   actionClass = "IG_DWSTORY",
   datetime = null,
+  embeddedPayload = null,
   mediaMarkup = "",
 } = {}) {
   return `<!doctype html>
     <html style="display:block;visibility:visible;opacity:1">
       <head>
         <script type="application/json">{"APP_ID":"936619743392459"}</script>
+        ${embeddedPayload
+          ? `<script type="application/json">${JSON.stringify(embeddedPayload)}</script>`
+          : ""}
       </head>
       <body style="display:block;visibility:visible;opacity:1">
         <div id="mount_0">
@@ -69,11 +73,14 @@ function storyHtml({
     </html>`;
 }
 
-function highlightHtml(actionClass = "IG_DWHISTORY") {
+function highlightHtml(actionClass = "IG_DWHISTORY", embeddedPayload = null) {
   return `<!doctype html>
     <html style="display:block;visibility:visible;opacity:1">
       <head>
         <script type="application/json">{"APP_ID":"936619743392459"}</script>
+        ${embeddedPayload
+          ? `<script type="application/json">${JSON.stringify(embeddedPayload)}</script>`
+          : ""}
       </head>
       <body style="display:block;visibility:visible;opacity:1">
         <div id="mount_0">
@@ -229,6 +236,49 @@ function manifestlessVideoMediaRoute(mediaId) {
   };
 }
 
+function currentStoryBootstrap({ reelId, mediaId, videoUrl }) {
+  return {
+    deeply: {
+      nested: {
+        xdt_api__v1__feed__reels_media__connection: {
+          edges: [
+            {
+              node: {
+                id: reelId,
+                user: {
+                  id: "100000000000000001",
+                  pk: "100000000000000001",
+                  username: "fixture_user",
+                },
+                items: [
+                  {
+                    id: `${mediaId}_100000000000000001`,
+                    pk: mediaId,
+                    media_type: 2,
+                    taken_at: 1_700_000_060,
+                    image_versions2: {
+                      candidates: [
+                        {
+                          url: `${videoUrl}.jpg`,
+                          width: 1080,
+                          height: 1920,
+                        },
+                      ],
+                    },
+                    video_versions: [
+                      { url: videoUrl, width: 720, height: 1280 },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+}
+
 async function createStoryRuntime({
   actionClass = "IG_DWSTORY",
   datetime = null,
@@ -336,6 +386,67 @@ describe("mounted Story/Highlight current-item integration", () => {
       expect(loadHandlerCount(app, image)).toBe(1);
     },
   );
+
+  it("downloads a current embedded Story without search, GraphQL, or Media API", async () => {
+    const mediaId = "3811480328699137079";
+    const videoUrl = "https://cdn.example.test/current-story.mp4";
+    const app = await createCurrentUserscriptRuntime({
+      html: storyHtml({
+        embeddedPayload: currentStoryBootstrap({
+          reelId: "100000000000000001",
+          mediaId,
+          videoUrl,
+        }),
+      }),
+      url: `https://www.instagram.com/stories/fixture_user/${mediaId}/`,
+    });
+    runtimes.push(app);
+
+    click(app, ".IG_DWSTORY");
+    await app.flushMicrotasks(40);
+
+    expect(
+      app.requests.filter((request) =>
+        /\/web\/search\/topsearch|\/graphql\/query\/|\/api\/v1\/media\//.test(
+          request.url,
+        )
+      ),
+    ).toEqual([]);
+    expect(app.downloads).toHaveLength(1);
+    expect(app.downloads[0].url).toBe(videoUrl);
+    expect(app.alerts).toEqual([]);
+    expectLoadingState(app, false);
+  });
+
+  it("downloads a current embedded Highlight without its retired query hash", async () => {
+    const highlightId = "18142207969557132";
+    const mediaId = "3811480328699137080";
+    const videoUrl = "https://cdn.example.test/current-highlight.mp4";
+    const payload = currentStoryBootstrap({
+      reelId: `highlight:${highlightId}`,
+      mediaId,
+      videoUrl,
+    });
+    const app = await createCurrentUserscriptRuntime({
+      html: highlightHtml("IG_DWHISTORY", payload),
+      url: `https://www.instagram.com/stories/highlights/${highlightId}/`,
+    });
+    runtimes.push(app);
+
+    click(app, ".IG_DWHISTORY");
+    await app.flushMicrotasks(40);
+
+    expect(
+      app.requests.filter((request) =>
+        request.url.includes(`query_hash=${HIGHLIGHT_QUERY_HASH}`) ||
+        request.url.includes("/api/v1/media/")
+      ),
+    ).toEqual([]);
+    expect(app.downloads).toHaveLength(1);
+    expect(app.downloads[0].url).toBe(videoUrl);
+    expect(app.alerts).toEqual([]);
+    expectLoadingState(app, false);
+  });
 
   it("retries Safari policy-denied Story metadata in the authenticated page context", async () => {
     const mediaId = "300000000000000102";

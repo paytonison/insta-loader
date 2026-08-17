@@ -17,7 +17,7 @@
 // @name:zh-CN         insta-loader
 // @name:zh-TW         insta-loader
 // @namespace          https://github.com/paytonison/insta-loader/
-// @version            v1.3.3
+// @version            v1.3.4
 // @description        Download photos and videos from Instagram posts in one click, including Stories, Reels, and profile pictures.
 // @description:ar     نزّل صورًا ومقاطع فيديو من منشورات Instagram بنقرة واحدة، بما في ذلك القصص وReels وصور الملف الشخصي.
 // @description:de     Lade Fotos und Videos aus Instagram-Beiträgen mit einem Klick herunter, einschließlich Stories, Reels und Profilbildern.
@@ -1925,6 +1925,7 @@
   var media_exports = {};
   __export(media_exports, {
     DashExecutionCoordinator: () => DashExecutionCoordinator,
+    EmbeddedMediaRegistry: () => EmbeddedMediaRegistry,
     MEDIA_ACTION_STAGE: () => MEDIA_ACTION_STAGE,
     MEDIA_INTENT: () => MEDIA_INTENT,
     MEDIA_SURFACE: () => MEDIA_SURFACE,
@@ -1941,8 +1942,10 @@
     extractStoryReel: () => extractStoryReel,
     getImageTransformation: () => getImageTransformation,
     getMediaOwner: () => getMediaOwner,
+    isStoryVideoItem: () => isStoryVideoItem,
     normalizeApiMedia: () => normalizeApiMedia,
     normalizeHighlightMedia: () => normalizeHighlightMedia,
+    normalizeInstagramDashRepresentationUrl: () => normalizeInstagramDashRepresentationUrl,
     normalizeLegacyMedia: () => normalizeLegacyMedia,
     normalizeMaximumProgressiveCandidates: () => normalizeMaximumProgressiveCandidates,
     normalizeMaximumReelCandidates: () => normalizeMaximumReelCandidates,
@@ -2480,10 +2483,11 @@
   function normalizeRepresentation(representation) {
     const base = representation.querySelector("BaseURL")?.textContent?.trim();
     if (!base || !isHttpsUrl(base)) return null;
+    const url = normalizeInstagramDashRepresentationUrl(base);
     const adaptationSet = representation.closest("AdaptationSet");
     return {
       id: representation.getAttribute("id") || "",
-      url: base,
+      url,
       mimeType: representation.getAttribute("mimeType") || adaptationSet?.getAttribute("mimeType") || "",
       contentType: adaptationSet?.getAttribute("contentType") || "",
       codecs: representation.getAttribute("codecs") || adaptationSet?.getAttribute("codecs") || "",
@@ -2491,6 +2495,26 @@
       width: positiveInteger(representation.getAttribute("width")),
       height: positiveInteger(representation.getAttribute("height"))
     };
+  }
+  function normalizeInstagramDashRepresentationUrl(value) {
+    let url;
+    try {
+      url = new URL(value);
+    } catch (_error) {
+      return value;
+    }
+    const hostname = url.hostname.toLowerCase();
+    const isInstagramCdn = hostname === "cdninstagram.com" || hostname.endsWith(".cdninstagram.com") || hostname === "fbcdn.net" || hostname.endsWith(".fbcdn.net");
+    if (url.protocol !== "https:" || !isInstagramCdn) return value;
+    const start = url.searchParams.get("bytestart");
+    const end = url.searchParams.get("byteend");
+    if (!/^\d+$/.test(start || "") || !/^\d+$/.test(end || "")) {
+      return value;
+    }
+    if (Number(end) < Number(start)) return value;
+    url.searchParams.delete("bytestart");
+    url.searchParams.delete("byteend");
+    return url.href;
   }
   function positiveInteger(value) {
     return Number.parseInt(String(value || "0"), 10) || 0;
@@ -2592,6 +2616,278 @@
     }
   };
 
+  // src/media/embedded-media-registry.js
+  var DEFAULT_MAX_SCRIPT_CHARACTERS = 2e6;
+  var DEFAULT_MAX_TRAVERSED_NODES = 12e4;
+  var DEFAULT_MAX_DEPTH = 40;
+  var DEFAULT_MAX_ENTRIES = 512;
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+  function identity(value) {
+    if (typeof value === "string" && value.length > 0) return value;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+    return null;
+  }
+  function usernameKey(value) {
+    const normalized = identity(value)?.trim().toLowerCase();
+    return normalized || null;
+  }
+  function highlightKey(value) {
+    const normalized = identity(value)?.trim().replace(/^highlight:/i, "");
+    return normalized || null;
+  }
+  function unwrapXigMedia(value) {
+    if (!isRecord(value)) return null;
+    const item = value.if_not_gated_logged_out ?? value.if_not_gated ?? value;
+    return isRecord(item) ? item : null;
+  }
+  function looksLikeStoryItem(value) {
+    if (!isRecord(value)) return false;
+    return (value.id != null || value.pk != null) && (value.taken_at != null || value.taken_at_timestamp != null || value.media_type != null || value.is_video != null) && (Array.isArray(value.video_versions) || Array.isArray(value.video_resources) || Array.isArray(value?.image_versions2?.candidates) || Array.isArray(value.display_resources) || typeof value.display_url === "string");
+  }
+  function looksLikeStoryReel(value) {
+    return isRecord(value) && Array.isArray(value.items) && value.items.some(looksLikeStoryItem);
+  }
+  var EmbeddedMediaRegistry = class {
+    constructor(options = {}) {
+      this.maxScriptCharacters = options.maxScriptCharacters ?? DEFAULT_MAX_SCRIPT_CHARACTERS;
+      this.maxTraversedNodes = options.maxTraversedNodes ?? DEFAULT_MAX_TRAVERSED_NODES;
+      this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+      this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
+      this.scannedScripts = /* @__PURE__ */ new WeakSet();
+      this.reelsByShortcode = /* @__PURE__ */ new Map();
+      this.storyReelsByIdentity = /* @__PURE__ */ new Map();
+    }
+    /**
+     * @param {Document|Element} root
+     * @param {{highlightId?: unknown, username?: unknown, userId?: unknown}} [hints]
+     * @return {{parseFailures: number, reelItems: number, scripts: number, storyReels: number, truncatedScripts: number}}
+     */
+    scan(root, hints = {}) {
+      const result = {
+        parseFailures: 0,
+        reelItems: 0,
+        scripts: 0,
+        storyReels: 0,
+        truncatedScripts: 0
+      };
+      if (!root || typeof root.querySelectorAll !== "function") return result;
+      const hintedStoryCandidates = /* @__PURE__ */ new Set();
+      const scripts = [];
+      if (root.matches?.('script[type="application/json"]')) scripts.push(root);
+      root.querySelectorAll('script[type="application/json"]').forEach(
+        (script) => scripts.push(script)
+      );
+      for (const script of scripts) {
+        if (this.scannedScripts.has(script)) continue;
+        this.scannedScripts.add(script);
+        const source = script.textContent || "";
+        if (!source.trim()) continue;
+        if (source.length > this.maxScriptCharacters) {
+          result.truncatedScripts += 1;
+          continue;
+        }
+        let payload;
+        try {
+          payload = JSON.parse(source);
+        } catch (_error) {
+          result.parseFailures += 1;
+          continue;
+        }
+        result.scripts += 1;
+        const indexed = this.indexPayload(payload);
+        result.reelItems += indexed.reelItems;
+        result.storyReels += indexed.storyReels;
+        result.truncatedScripts += indexed.truncated ? 1 : 0;
+        indexed.storyCandidates.forEach(
+          (reel) => hintedStoryCandidates.add(reel)
+        );
+      }
+      if (hintedStoryCandidates.size === 1) {
+        this.registerStoryHints([...hintedStoryCandidates][0], hints);
+      }
+      return result;
+    }
+    /** @param {unknown} shortcode @return {Record<string, any>|null} */
+    getReel(shortcode) {
+      const key = identity(shortcode);
+      return key ? this.reelsByShortcode.get(key) ?? null : null;
+    }
+    /**
+     * @param {{highlightId?: unknown, username?: unknown, userId?: unknown}} identityHints
+     * @return {Record<string, any>|null}
+     */
+    getStory(identityHints = {}) {
+      const keys = [
+        highlightKey(identityHints.highlightId) ? `highlight:${highlightKey(identityHints.highlightId)}` : null,
+        usernameKey(identityHints.username) ? `username:${usernameKey(identityHints.username)}` : null,
+        identity(identityHints.userId) ? `user:${identity(identityHints.userId)}` : null
+      ].filter(Boolean);
+      for (const key of keys) {
+        const reel = this.storyReelsByIdentity.get(key);
+        if (reel) {
+          return { status: "ok", data: { reels_media: [reel] } };
+        }
+      }
+      return null;
+    }
+    clear() {
+      this.scannedScripts = /* @__PURE__ */ new WeakSet();
+      this.reelsByShortcode.clear();
+      this.storyReelsByIdentity.clear();
+    }
+    /**
+     * @param {unknown} payload
+     * @return {{reelItems: number, storyCandidates: Set<Record<string, any>>, storyReels: number, truncated: boolean}}
+     */
+    indexPayload(payload) {
+      const stack = [{ depth: 0, value: payload }];
+      const visited = /* @__PURE__ */ new WeakSet();
+      const storyCandidates = /* @__PURE__ */ new Set();
+      let traversed = 0;
+      let reelItems = 0;
+      while (stack.length > 0 && traversed < this.maxTraversedNodes) {
+        const { depth, value } = stack.pop();
+        if (value === null || typeof value !== "object") continue;
+        if (visited.has(value)) continue;
+        visited.add(value);
+        traversed += 1;
+        if (isRecord(value)) {
+          const xigItem = unwrapXigMedia(value.xig_polaris_media);
+          if (xigItem && this.registerReel(xigItem)) reelItems += 1;
+          const xdtItems = value.xdt_api__v1__media__shortcode__web_info?.items;
+          if (Array.isArray(xdtItems)) {
+            for (const item of xdtItems) {
+              if (this.registerReel(item)) reelItems += 1;
+            }
+          }
+          const connection = value.xdt_api__v1__feed__reels_media__connection;
+          if (isRecord(connection) && Array.isArray(connection.edges)) {
+            for (const edge of connection.edges) {
+              if (looksLikeStoryReel(edge?.node)) {
+                storyCandidates.add(edge.node);
+              }
+            }
+          }
+          if (Array.isArray(value.reels_media)) {
+            for (const reel of value.reels_media) {
+              if (looksLikeStoryReel(reel)) storyCandidates.add(reel);
+            }
+          }
+        }
+        if (depth >= this.maxDepth) continue;
+        const children = Array.isArray(value) ? value : Object.values(value);
+        for (let index = children.length - 1; index >= 0; index -= 1) {
+          const child = children[index];
+          if (child !== null && typeof child === "object") {
+            stack.push({ depth: depth + 1, value: child });
+          }
+        }
+      }
+      for (const reel of storyCandidates) this.registerStoryReel(reel);
+      return {
+        reelItems,
+        storyCandidates,
+        storyReels: storyCandidates.size,
+        truncated: stack.length > 0
+      };
+    }
+    /** @param {unknown} item @return {boolean} */
+    registerReel(item) {
+      if (!isRecord(item)) return false;
+      const shortcode = identity(item.code ?? item.shortcode);
+      if (!shortcode) return false;
+      this.setBounded(this.reelsByShortcode, shortcode, item);
+      return true;
+    }
+    /** @param {Record<string, any>} reel */
+    registerStoryReel(reel) {
+      const rawId = identity(reel.id ?? reel.pk);
+      if (rawId?.toLowerCase().startsWith("highlight:")) {
+        const normalizedHighlightId = highlightKey(rawId);
+        if (normalizedHighlightId) {
+          this.setBounded(
+            this.storyReelsByIdentity,
+            `highlight:${normalizedHighlightId}`,
+            reel
+          );
+        }
+      }
+      if (rawId) {
+        this.setBounded(
+          this.storyReelsByIdentity,
+          `user:${rawId}`,
+          reel
+        );
+      }
+      const owners = [
+        reel.user,
+        reel.owner,
+        reel.items?.[0]?.user,
+        reel.items?.[0]?.owner
+      ].filter(isRecord);
+      for (const owner of owners) {
+        const username = usernameKey(owner.username);
+        const userId = identity(owner.pk ?? owner.id);
+        if (username) {
+          this.setBounded(
+            this.storyReelsByIdentity,
+            `username:${username}`,
+            reel
+          );
+        }
+        if (userId) {
+          this.setBounded(
+            this.storyReelsByIdentity,
+            `user:${userId}`,
+            reel
+          );
+        }
+      }
+    }
+    /**
+     * @param {Record<string, any>} reel
+     * @param {{highlightId?: unknown, username?: unknown, userId?: unknown}} hints
+     */
+    registerStoryHints(reel, hints) {
+      const normalizedHighlightId = highlightKey(hints.highlightId);
+      const normalizedUsername = usernameKey(hints.username);
+      const normalizedUserId = identity(hints.userId);
+      if (normalizedHighlightId) {
+        this.setBounded(
+          this.storyReelsByIdentity,
+          `highlight:${normalizedHighlightId}`,
+          reel
+        );
+      }
+      if (normalizedUsername) {
+        this.setBounded(
+          this.storyReelsByIdentity,
+          `username:${normalizedUsername}`,
+          reel
+        );
+      }
+      if (normalizedUserId) {
+        this.setBounded(
+          this.storyReelsByIdentity,
+          `user:${normalizedUserId}`,
+          reel
+        );
+      }
+    }
+    /** @param {Map<any, any>} map @param {any} key @param {any} value */
+    setBounded(map, key, value) {
+      if (map.has(key)) map.delete(key);
+      map.set(key, value);
+      while (map.size > this.maxEntries) {
+        map.delete(map.keys().next().value);
+      }
+    }
+  };
+
   // src/media/image-candidates.js
   function getImageTransformation(value) {
     if (typeof value !== "string" || value.length === 0) return null;
@@ -2628,7 +2924,7 @@
   }
 
   // src/media/normalizers.js
-  function isRecord(value) {
+  function isRecord2(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
   function optionalString(value) {
@@ -2682,10 +2978,10 @@
     };
   }
   function extractLegacyResource(payload) {
-    if (!isRecord(payload)) return null;
-    const root = isRecord(payload.data) ? payload.data : payload;
-    const resource = isRecord(root.shortcode_media) ? root.shortcode_media : root;
-    return isRecord(resource) ? resource : null;
+    if (!isRecord2(payload)) return null;
+    const root = isRecord2(payload.data) ? payload.data : payload;
+    const resource = isRecord2(root.shortcode_media) ? root.shortcode_media : root;
+    return isRecord2(resource) ? resource : null;
   }
   function normalizeLegacyMedia(payload) {
     const resource = extractLegacyResource(payload);
@@ -2726,7 +3022,7 @@
     if (resource.__typename !== "GraphSidecar") return [];
     const edges = Array.isArray(resource.edge_sidecar_to_children?.edges) ? resource.edge_sidecar_to_children.edges : [];
     return edges.flatMap((edge, index) => {
-      const item = isRecord(edge?.node) ? edge.node : null;
+      const item = isRecord2(edge?.node) ? edge.node : null;
       if (!item) return [];
       if (item.__typename === "GraphVideo") {
         const descriptor = createMediaDescriptor({
@@ -2763,11 +3059,11 @@
     });
   }
   function extractApiResource(payload) {
-    if (!isRecord(payload)) return null;
-    const root = isRecord(payload.data) ? payload.data : payload;
+    if (!isRecord2(payload)) return null;
+    const root = isRecord2(payload.data) ? payload.data : payload;
     const xdtItem = root.xdt_api__v1__media__shortcode__web_info?.items?.[0];
-    const resource = isRecord(xdtItem) && xdtItem || isRecord(root.shortcode_media) && root.shortcode_media || isRecord(root.items?.[0]) && root.items[0] || root;
-    return isRecord(resource) ? resource : null;
+    const resource = isRecord2(xdtItem) && xdtItem || isRecord2(root.shortcode_media) && root.shortcode_media || isRecord2(root.items?.[0]) && root.items[0] || root;
+    return isRecord2(resource) ? resource : null;
   }
   function normalizeApiItem(item, { owner, shortcode, carouselIndex }) {
     const imageCandidates = getApiImageCandidates(item);
@@ -2807,7 +3103,7 @@
     const shortcode = optionalString(resource.code) ?? optionalString(resource.shortcode);
     if (Array.isArray(resource.carousel_media)) {
       return resource.carousel_media.flatMap((item, index) => {
-        if (!isRecord(item)) return [];
+        if (!isRecord2(item)) return [];
         const descriptor2 = normalizeApiItem(item, {
           owner,
           shortcode,
@@ -2824,7 +3120,7 @@
     return descriptor ? [descriptor] : [];
   }
   function normalizeMediaResponse(response) {
-    if (!isRecord(response)) return [];
+    if (!isRecord2(response)) return [];
     return response.type === "query_hash" ? normalizeLegacyMedia(response.data) : normalizeApiMedia(response.data ?? response);
   }
   var normalizeQueryHashMedia = normalizeLegacyMedia;
@@ -2845,7 +3141,8 @@
     if (data === null || typeof data !== "object" || Array.isArray(data)) {
       return null;
     }
-    const item = data.xdt_api__v1__media__shortcode__web_info?.items?.[0] || data.shortcode_media || data.items?.[0] || data;
+    const xigMedia = data.xig_polaris_media;
+    const item = xigMedia?.if_not_gated_logged_out || xigMedia?.if_not_gated || xigMedia || data.xdt_api__v1__media__shortcode__web_info?.items?.[0] || data.shortcode_media || data.items?.[0] || data;
     return item !== null && typeof item === "object" && !Array.isArray(item) ? item : null;
   }
   function normalizeMaximumProgressiveCandidates(data) {
@@ -2945,7 +3242,7 @@
     FIRST: "first",
     LAST: "last"
   });
-  function isRecord2(value) {
+  function isRecord3(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
   function optionalString2(value) {
@@ -2994,9 +3291,9 @@
     };
   }
   function extractProfileUser(payload) {
-    if (!isRecord2(payload)) return null;
+    if (!isRecord3(payload)) return null;
     const user = payload?.data?.user ?? payload.user ?? payload.data ?? payload;
-    return isRecord2(user) ? user : null;
+    return isRecord3(user) ? user : null;
   }
   function extractHighResolutionProfileUrl(payload) {
     if (typeof payload === "string") return optionalString2(payload);
@@ -3028,43 +3325,63 @@
     return descriptor ? [descriptor] : [];
   }
   function extractStoryReel(payload) {
-    if (!isRecord2(payload)) return null;
+    if (!isRecord3(payload)) return null;
     const reelsMedia = payload?.data?.reels_media ?? payload.reels_media;
-    if (Array.isArray(reelsMedia) && isRecord2(reelsMedia[0])) {
+    if (Array.isArray(reelsMedia) && isRecord3(reelsMedia[0])) {
       return reelsMedia[0];
     }
+    const roots = [payload, payload.data, payload?.data?.data].filter(isRecord3);
+    for (const root of roots) {
+      const connection = root.xdt_api__v1__feed__reels_media__connection;
+      const node = connection?.edges?.[0]?.node;
+      if (isRecord3(node) && Array.isArray(node.items)) return node;
+    }
     return Array.isArray(payload.items) ? payload : null;
+  }
+  function isStoryVideoItem(item) {
+    if (!isRecord3(item)) return false;
+    return item.is_video === true || Number(item.media_type) === 2 || Array.isArray(item.video_resources) && item.video_resources.length > 0 || Array.isArray(item.video_versions) && item.video_versions.length > 0;
   }
   function selectLargestStoryDisplayResource(resources) {
     if (!Array.isArray(resources) || resources.length === 0) return null;
     return [...resources].sort((left, right) => {
-      if (left?.config_width < right?.config_width) return 1;
-      if (left?.config_width > right?.config_width) return -1;
+      const leftWidth = Number(left?.config_width ?? left?.width) || 0;
+      const rightWidth = Number(right?.config_width ?? right?.width) || 0;
+      if (leftWidth < rightWidth) return 1;
+      if (leftWidth > rightWidth) return -1;
       return 0;
     })[0];
   }
+  function getStoryResourceUrl(resource) {
+    return optionalString2(resource?.src) ?? optionalString2(resource?.url);
+  }
   function selectStoryImageUrl(item, preference) {
-    const resources = Array.isArray(item.display_resources) ? item.display_resources : [];
+    const legacyResources = Array.isArray(item.display_resources) ? item.display_resources : [];
+    const currentResources = Array.isArray(item?.image_versions2?.candidates) ? item.image_versions2.candidates : [];
+    const allResources = legacyResources.length ? legacyResources : currentResources;
     switch (preference) {
       case STORY_IMAGE_CANDIDATE.DISPLAY_URL:
-        return optionalString2(item.display_url);
+        return optionalString2(item.display_url) ?? getStoryResourceUrl(currentResources[0]) ?? getStoryResourceUrl(selectLargestStoryDisplayResource(allResources));
       case STORY_IMAGE_CANDIDATE.LAST:
-        return optionalString2(resources.at(-1)?.src);
+        return legacyResources.length ? getStoryResourceUrl(legacyResources.at(-1)) : getStoryResourceUrl(
+          selectLargestStoryDisplayResource(currentResources)
+        );
       case STORY_IMAGE_CANDIDATE.WIDEST:
-        return optionalString2(
-          selectLargestStoryDisplayResource(resources)?.src
+        return getStoryResourceUrl(
+          selectLargestStoryDisplayResource(allResources)
         );
       default:
         throw new TypeError(`Unknown Story image candidate: ${preference}`);
     }
   }
   function selectStoryVideoUrl(item, preference) {
-    const resources = Array.isArray(item.video_resources) ? item.video_resources : [];
+    const legacyResources = Array.isArray(item.video_resources) ? item.video_resources : [];
+    const currentResources = Array.isArray(item.video_versions) ? item.video_versions : [];
     switch (preference) {
       case STORY_VIDEO_CANDIDATE.FIRST:
-        return optionalString2(resources[0]?.src);
+        return getStoryResourceUrl(legacyResources[0]) ?? getStoryResourceUrl(currentResources[0]);
       case STORY_VIDEO_CANDIDATE.LAST:
-        return optionalString2(resources.at(-1)?.src);
+        return getStoryResourceUrl(legacyResources.at(-1)) ?? getStoryResourceUrl(currentResources[0]);
       default:
         throw new TypeError(`Unknown Story video candidate: ${preference}`);
     }
@@ -3087,17 +3404,17 @@
     const items = Array.isArray(reel.items) ? reel.items : [];
     const owner = optionalString2(reel?.user?.username) ?? optionalString2(reel?.owner?.username);
     return items.flatMap((item, index) => {
-      if (!isRecord2(item)) return [];
-      const isVideo = item.is_video === true;
+      if (!isRecord3(item)) return [];
+      const isVideo = isStoryVideoItem(item);
       const imageUrl = selectStoryImageUrl(item, imageCandidate);
       const descriptor = createSurfaceDescriptor({
-        mediaId: item.id,
+        mediaId: item.pk ?? item.id,
         directUrl: isVideo ? selectStoryVideoUrl(item, videoCandidate) : imageUrl,
         thumbnailUrl: imageUrl,
         kind: isVideo ? "video" : "image",
-        owner,
-        shortcode: item.id,
-        publishTime: renamePublishDate ? item.taken_at_timestamp ?? nowSeconds : nowSeconds,
+        owner: owner ?? getOwner(item),
+        shortcode: item.code ?? item.id ?? item.pk,
+        publishTime: renamePublishDate ? item.taken_at_timestamp ?? item.taken_at ?? nowSeconds : nowSeconds,
         carouselIndex: index + 1,
         rawMediaItem: item,
         dashManifest: item.video_dash_manifest,
@@ -3123,30 +3440,35 @@
     });
   }
   function getReelResponseType(response) {
-    if (isRecord2(response) && response.type === "query_hash") {
+    if (isRecord3(response) && response.type === "query_hash") {
       return "query_hash";
     }
-    if (isRecord2(response) && response.type === "query_id") {
+    if (isRecord3(response) && response.type === "query_id") {
       return "query_id";
     }
-    const payload = isRecord2(response?.data) ? response.data : response;
-    if (isRecord2(payload?.shortcode_media) || payload?.__typename === "GraphVideo" || payload?.__typename === "GraphImage") {
+    const payload = isRecord3(response?.data) ? response.data : response;
+    if (isRecord3(payload?.shortcode_media) || payload?.__typename === "GraphVideo" || payload?.__typename === "GraphImage") {
       return "query_hash";
     }
     return "query_id";
   }
   function extractReelItems(response, responseType) {
-    if (!isRecord2(response)) return [];
-    const envelope = isRecord2(response.data) ? response.data : response;
-    const payload = isRecord2(envelope.data) ? envelope.data : envelope;
+    if (!isRecord3(response)) return [];
+    const envelope = isRecord3(response.data) ? response.data : response;
+    const payload = isRecord3(envelope.data) ? envelope.data : envelope;
     if (responseType === "query_hash") {
-      const resource = isRecord2(payload.shortcode_media) ? payload.shortcode_media : payload;
-      return isRecord2(resource) ? [resource] : [];
+      const resource = isRecord3(payload.shortcode_media) ? payload.shortcode_media : payload;
+      return isRecord3(resource) ? [resource] : [];
+    }
+    const xigMedia = payload.xig_polaris_media ?? envelope.xig_polaris_media;
+    if (isRecord3(xigMedia)) {
+      const resource = xigMedia.if_not_gated_logged_out ?? xigMedia.if_not_gated ?? xigMedia;
+      return isRecord3(resource) ? [resource] : [];
     }
     const xdtItems = payload?.xdt_api__v1__media__shortcode__web_info?.items;
-    if (Array.isArray(xdtItems)) return xdtItems.filter(isRecord2);
-    if (Array.isArray(payload.items)) return payload.items.filter(isRecord2);
-    return isRecord2(payload) ? [payload] : [];
+    if (Array.isArray(xdtItems)) return xdtItems.filter(isRecord3);
+    if (Array.isArray(payload.items)) return payload.items.filter(isRecord3);
+    return isRecord3(payload) ? [payload] : [];
   }
   function normalizeReelMedia(response, { isVideo = null, shortcode = null } = {}) {
     const responseType = getReelResponseType(response);
@@ -3154,10 +3476,10 @@
     return items.flatMap((item, index) => {
       const imageCandidates = Array.isArray(item?.image_versions2?.candidates) ? item.image_versions2.candidates : [];
       const displayResources = Array.isArray(item.display_resources) ? item.display_resources : [];
-      const thumbnailUrl = responseType === "query_hash" ? optionalString2(displayResources.at(-1)?.src) : optionalString2(imageCandidates[0]?.url);
-      const resourceIsVideo = responseType === "query_hash" ? item.is_video === true : item.video_versions != null;
+      const thumbnailUrl = responseType === "query_hash" ? optionalString2(displayResources.at(-1)?.src) : optionalString2(imageCandidates[0]?.url) ?? optionalString2(displayResources.at(-1)?.src);
+      const resourceIsVideo = responseType === "query_hash" ? item.is_video === true : Number(item.media_type) === 2 || Array.isArray(item.video_versions) && item.video_versions.length > 0 || optionalString2(item.video_url) !== null;
       const useVideo = typeof isVideo === "boolean" ? isVideo && resourceIsVideo : resourceIsVideo;
-      const directUrl = useVideo ? responseType === "query_hash" ? item.video_url : item?.video_versions?.[0]?.url : thumbnailUrl;
+      const directUrl = useVideo ? responseType === "query_hash" ? item.video_url : item?.video_versions?.[0]?.url ?? item.video_url : thumbnailUrl;
       const descriptor = createSurfaceDescriptor({
         mediaId: item.pk ?? item.id,
         directUrl,
@@ -3165,7 +3487,7 @@
         kind: useVideo ? "video" : "image",
         owner: getOwner(item),
         shortcode: shortcode ?? item.code ?? item.shortcode,
-        publishTime: responseType === "query_hash" ? item.taken_at_timestamp : item.taken_at,
+        publishTime: responseType === "query_hash" ? item.taken_at_timestamp : item.taken_at ?? item.taken_at_timestamp,
         carouselIndex: index + 1,
         rawMediaItem: item,
         dashManifest: item.video_dash_manifest,
@@ -3253,7 +3575,11 @@
   function findItemIndexById(items, mediaId) {
     const normalizedId = normalizeId(mediaId);
     if (normalizedId === null) return -1;
-    return items.findIndex((item) => normalizeId(item?.id) === normalizedId);
+    return items.findIndex(
+      (item) => [item?.pk, item?.id].some(
+        (candidate) => normalizeId(candidate) === normalizedId
+      )
+    );
   }
   function resolutionAt(items, index, source) {
     if (!Number.isInteger(index) || index < 0 || index >= items.length) {
@@ -3262,7 +3588,7 @@
     const item = items[index];
     return {
       item,
-      mediaId: item?.id ?? null,
+      mediaId: item?.pk ?? item?.id ?? null,
       itemIndex: index,
       source
     };
@@ -3281,7 +3607,7 @@
       let minimumDifference = Infinity;
       candidates.forEach((item, index) => {
         const difference = Math.abs(
-          (Number(item?.taken_at_timestamp) || 0) - hints.visibleTimestamp
+          (Number(item?.taken_at_timestamp ?? item?.taken_at) || 0) - hints.visibleTimestamp
         );
         if (difference < minimumDifference) {
           minimumDifference = difference;
@@ -3312,7 +3638,7 @@
       const routeIndex = findItemIndexById(candidates, routeMediaId);
       return {
         item: routeIndex >= 0 ? candidates[routeIndex] : null,
-        mediaId: routeIndex >= 0 ? candidates[routeIndex]?.id ?? routeMediaId : routeMediaId,
+        mediaId: routeIndex >= 0 ? candidates[routeIndex]?.pk ?? candidates[routeIndex]?.id ?? routeMediaId : routeMediaId,
         itemIndex: routeIndex >= 0 ? routeIndex : null,
         source: CURRENT_ITEM_SOURCE.ROUTE_FALLBACK
       };
@@ -3490,8 +3816,7 @@
     THUMBNAIL: "thumbnail"
   });
   function getStoryReel(payload) {
-    const reel = payload?.data?.reels_media?.[0];
-    return reel && typeof reel === "object" ? reel : null;
+    return extractStoryReel(payload);
   }
   function getStoryItems(payload) {
     const items = getStoryReel(payload)?.items;
@@ -3501,10 +3826,10 @@
     const reel = getStoryReel(payload);
     return reel?.user?.username || reel?.owner?.username || null;
   }
-  function getStorySurfaceCacheKey(surface, identity) {
-    if (surface === STORY_SURFACE.STORY) return identity?.username || null;
+  function getStorySurfaceCacheKey(surface, identity2) {
+    if (surface === STORY_SURFACE.STORY) return identity2?.username || null;
     if (surface === STORY_SURFACE.HIGHLIGHT) {
-      return identity?.highlightId || null;
+      return identity2?.highlightId || null;
     }
     throw new TypeError(`Unknown Story surface: ${surface}`);
   }
@@ -3518,7 +3843,7 @@
     const captureImageViaMediaCache = Boolean(
       settings?.CAPTURE_IMAGE_VIA_MEDIA_CACHE
     );
-    const useImageCache = captureImageViaMediaCache && (intent === STORY_INTENT.THUMBNAIL || item != null && item?.is_video !== true);
+    const useImageCache = captureImageViaMediaCache && (intent === STORY_INTENT.THUMBNAIL || item != null && !isStoryVideoItem(item));
     const preferDashManifest = Boolean(settings?.PREFER_DASH_MANIFEST);
     return {
       forceResourceViaMedia,
@@ -3530,17 +3855,16 @@
         settings?.FALLBACK_TO_BLOB_FETCH_IF_MEDIA_API_THROTTLED
       ),
       preferDashManifest,
-      requestDash: requestMediaApi && preferDashManifest && intent !== STORY_INTENT.THUMBNAIL && item?.is_video === true,
+      requestDash: requestMediaApi && preferDashManifest && intent !== STORY_INTENT.THUMBNAIL && isStoryVideoItem(item),
       renamePublishDate: Boolean(settings?.RENAME_PUBLISH_DATE)
     };
   }
   function getStoryThumbnailMetadata(item, domMetadata) {
-    const largestDisplay = selectLargestStoryDisplayResource(
-      item?.display_resources
-    );
-    const displayUrl = item?.display_url || largestDisplay?.src || null;
+    const displayResources = Array.isArray(item?.display_resources) ? item.display_resources : item?.image_versions2?.candidates;
+    const largestDisplay = selectLargestStoryDisplayResource(displayResources);
+    const displayUrl = item?.display_url || largestDisplay?.src || largestDisplay?.url || null;
     return {
-      mediaId: item?.id ?? null,
+      mediaId: item?.pk ?? item?.id ?? null,
       displayUrl,
       posterUrl: domMetadata?.posterUrl || null,
       available: Boolean(domMetadata?.available || displayUrl)
@@ -10768,6 +11092,28 @@
       keySettingsHotkeyKeyCode: preferences2.hotkeys.keySettings,
       downloadStoryHotkeyKeyCode: preferences2.hotkeys.downloadStory
     };
+    const embeddedMediaRegistry = new media.EmbeddedMediaRegistry();
+    const embeddedStoryPayloads = /* @__PURE__ */ new WeakSet();
+    function getEmbeddedReelResponse(shortcode) {
+      embeddedMediaRegistry.scan(document);
+      const item = embeddedMediaRegistry.getReel(shortcode);
+      if (!item) return null;
+      logger("EmbeddedMediaRegistry", "Reel hit", shortcode);
+      return {
+        type: "query_id",
+        data: {
+          xig_polaris_media: { if_not_gated_logged_out: item }
+        }
+      };
+    }
+    function getEmbeddedStoryResponse(identity2) {
+      embeddedMediaRegistry.scan(document, identity2);
+      const payload = embeddedMediaRegistry.getStory(identity2);
+      if (!payload) return null;
+      embeddedStoryPayloads.add(payload);
+      logger("EmbeddedMediaRegistry", "Story hit", identity2);
+      return payload;
+    }
     const legacyVideoVolumeState = {
       get: () => state.videoVolume,
       set(value) {
@@ -11955,6 +12301,15 @@
         throwIfCancelled: () => throwIfStorySurfaceActionCancelled(actionLifecycle)
       };
     }
+    function hasDeliveredCurrentMedia(descriptor) {
+      const item = descriptor?.rawMediaItem;
+      const imageCandidates = item?.image_versions2?.candidates;
+      if (!Array.isArray(imageCandidates) || imageCandidates.length === 0) {
+        return false;
+      }
+      if (descriptor.kind !== "video") return true;
+      return Array.isArray(item.video_versions) && item.video_versions.length > 0;
+    }
     function runStorySurfaceAction(action, context) {
       if (activeStorySurfaceAction) return activeStorySurfaceAction;
       const routeCancellation = createStorySurfaceRouteCancellation(
@@ -11985,12 +12340,14 @@
     }
     async function downloadStoryBatchDescriptor(descriptor, allowDash, actionLifecycle) {
       throwIfStorySurfaceActionCancelled(actionLifecycle);
+      const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
       return await executeMediaDescriptor(
         descriptor,
         media.MEDIA_INTENT.DOWNLOAD,
         {
           ...createStorySurfaceMediaActionOptions(actionLifecycle),
-          useMediaApi: allowDash && descriptor.kind === "video" && !state.tempFetchRateLimit,
+          dashBeforeMediaApi: hasDeliveredMedia,
+          useMediaApi: allowDash && !hasDeliveredMedia && descriptor.kind === "video" && !state.tempFetchRateLimit,
           useDash: allowDash,
           markMediaApiFallback: allowDash
         }
@@ -12073,7 +12430,7 @@
           state.GL_dataCache.highlights[responseCacheKey]
         );
         if (actionContext.mediaApiPolicy.renamePublishDate) {
-          timestamp = target.taken_at_timestamp;
+          timestamp = target.taken_at_timestamp ?? target.taken_at;
         }
         const descriptor = normalizeLegacyStoryCurrentDescriptor(
           highStories,
@@ -12086,12 +12443,14 @@
         if (!descriptor) {
           throw new Error("Cannot resolve the current Highlight resource.");
         }
+        const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
         let usedImageCache = false;
         await executeMediaDescriptor(
           descriptor,
           isPreview ? media.MEDIA_INTENT.PREVIEW : media.MEDIA_INTENT.DOWNLOAD,
           {
             ...createStorySurfaceMediaActionOptions(actionLifecycle),
+            dashBeforeMediaApi: hasDeliveredMedia,
             defaultTimestamp: timestamp,
             deferMediaApiRequestFailureAlert: true,
             includeIndex: false,
@@ -12119,7 +12478,7 @@
             useDash: actionContext.mediaApiPolicy.requestDash,
             useDashForPreview: actionContext.mediaApiPolicy.requestDash,
             useImageCache: actionContext.mediaApiPolicy.useImageCache,
-            useMediaApi: actionContext.mediaApiPolicy.requestMediaApi
+            useMediaApi: actionContext.mediaApiPolicy.requestMediaApi && !hasDeliveredMedia
           }
         );
         if (usedImageCache) return;
@@ -12202,7 +12561,7 @@
         const target = actionContext.current.item;
         username = actionContext.owner || username;
         if (actionContext.mediaApiPolicy.renamePublishDate) {
-          timestamp = target.taken_at_timestamp;
+          timestamp = target.taken_at_timestamp ?? target.taken_at;
         }
         const descriptor = normalizeLegacyStoryCurrentDescriptor(
           highStories,
@@ -12215,6 +12574,7 @@
         if (!descriptor) {
           throw new Error("Cannot resolve the current Highlight thumbnail.");
         }
+        const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
         let usedImageCache = false;
         await executeMediaDescriptor(
           descriptor,
@@ -12250,7 +12610,7 @@
             thumbnailSourceType: "highlights",
             useDash: false,
             useImageCache: actionContext.mediaApiPolicy.useImageCache,
-            useMediaApi: actionContext.mediaApiPolicy.requestMediaApi
+            useMediaApi: actionContext.mediaApiPolicy.requestMediaApi && !hasDeliveredMedia
           }
         );
         if (usedImageCache) return;
@@ -13042,8 +13402,10 @@
       try {
         if (isDownload) {
           updateLoadingBar(true);
-          let reelsPath = location.href.split("?").at(0).split("instagram.com/reels/").at(-1).replaceAll("/", "");
-          let result = await getBlobMedia(reelsPath);
+          const reelsPath = location.pathname.match(
+            /\/(?:reel|reels)\/([A-Za-z0-9_-]{5,64})(?:\/|$)/
+          )?.[1];
+          let result = await getReelMedia(reelsPath);
           const descriptor = media.normalizeReelMedia(result, {
             isVideo,
             shortcode: reelsPath
@@ -13262,10 +13624,7 @@
     async function onStoryAll(actionLifecycle) {
       throwIfStorySurfaceActionCancelled(actionLifecycle);
       let username = $("body > div section._ac0a header._ac0k ._ac0l a + div a").first().text() || location.pathname.split("/").filter((s) => s.length > 0).at(1);
-      let userInfo = await getUserId(username);
-      throwIfStorySurfaceActionCancelled(actionLifecycle);
-      let userId = userInfo.user.pk;
-      let stories = await getStories(userId);
+      let stories = await getStoriesByUsername(username);
       throwIfStorySurfaceActionCancelled(actionLifecycle);
       if (USER_SETTING.DIRECT_DOWNLOAD_STORY) {
         scheduleStoryBatchDownloads(
@@ -13293,10 +13652,7 @@
           { intent }
         );
         if (initialMediaApiPolicy.requestMediaApi) {
-          let userInfo = await getUserId(username);
-          throwIfStorySurfaceActionCancelled(actionLifecycle);
-          let userId = userInfo.user.pk;
-          let stories = await getStories(userId);
+          let stories = await getStoriesByUsername(username);
           throwIfStorySurfaceActionCancelled(actionLifecycle);
           const domState = readLegacyStoryDomState();
           const actionContext = createLegacyStoryActionContext(
@@ -13319,12 +13675,14 @@
               surface: STORY_SURFACE.STORY
             }
           );
+          const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
           let usedImageCache = false;
           await executeMediaDescriptor(
             descriptor,
             isPreview ? media.MEDIA_INTENT.PREVIEW : media.MEDIA_INTENT.DOWNLOAD,
             {
               ...createStorySurfaceMediaActionOptions(actionLifecycle),
+              dashBeforeMediaApi: hasDeliveredMedia,
               defaultTimestamp: timestamp,
               deferMediaApiRequestFailureAlert: true,
               includeIndex: false,
@@ -13353,7 +13711,7 @@
               useDash: actionContext.mediaApiPolicy.requestDash,
               useDashForPreview: actionContext.mediaApiPolicy.requestDash,
               useImageCache: actionContext.mediaApiPolicy.useImageCache,
-              useMediaApi: actionContext.mediaApiPolicy.requestMediaApi
+              useMediaApi: actionContext.mediaApiPolicy.requestMediaApi && !hasDeliveredMedia
             }
           );
           if (usedImageCache) return;
@@ -13366,12 +13724,11 @@
             logger("Fetch from memory cache:", username);
             stories = state.GL_dataCache.stories[username];
           } else {
-            let userInfo = await getUserId(username);
+            stories = await getStoriesByUsername(username, {
+              skipEmbedded: isForce
+            });
             throwIfStorySurfaceActionCancelled(actionLifecycle);
-            let userId = userInfo.user.pk;
-            stories = await getStories(userId);
-            throwIfStorySurfaceActionCancelled(actionLifecycle);
-            fetchedStories = true;
+            fetchedStories = !embeddedStoryPayloads.has(stories);
             state.GL_dataCache.stories[username] = stories;
           }
           const domState = readLegacyStoryDomState();
@@ -13547,10 +13904,7 @@
           { intent: STORY_INTENT.THUMBNAIL }
         );
         if (initialMediaApiPolicy.requestMediaApi) {
-          let userInfo = await getUserId(username);
-          throwIfStorySurfaceActionCancelled(actionLifecycle);
-          let userId = userInfo.user.pk;
-          let stories2 = await getStories(userId);
+          let stories2 = await getStoriesByUsername(username);
           throwIfStorySurfaceActionCancelled(actionLifecycle);
           const domState2 = readLegacyStoryDomState();
           const actionContext2 = createLegacyStoryActionContext(
@@ -13574,6 +13928,7 @@
               surface: STORY_SURFACE.STORY
             }
           );
+          const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor2);
           let usedImageCache = false;
           await executeMediaDescriptor(
             descriptor2,
@@ -13607,7 +13962,7 @@
               thumbnailSourceType: "stories",
               useDash: false,
               useImageCache: actionContext2.mediaApiPolicy.useImageCache,
-              useMediaApi: actionContext2.mediaApiPolicy.requestMediaApi
+              useMediaApi: actionContext2.mediaApiPolicy.requestMediaApi && !hasDeliveredMedia
             }
           );
           if (usedImageCache) return;
@@ -13619,12 +13974,11 @@
           logger("Fetch from memory cache:", username);
           stories = state.GL_dataCache.stories[username];
         } else {
-          let userInfo = await getUserId(username);
+          stories = await getStoriesByUsername(username, {
+            skipEmbedded: isForce
+          });
           throwIfStorySurfaceActionCancelled(actionLifecycle);
-          let userId = userInfo.user.pk;
-          stories = await getStories(userId);
-          throwIfStorySurfaceActionCancelled(actionLifecycle);
-          fetchedStories = true;
+          fetchedStories = !embeddedStoryPayloads.has(stories);
         }
         const domState = readLegacyStoryDomState();
         const actionContext = createLegacyStoryActionContext(
@@ -13705,14 +14059,25 @@
         }
       }
     }
-    function getHighlightStories(highlightId) {
+    function getHighlightStories(highlightId, options = {}) {
+      if (options.skipEmbedded !== true) {
+        const embedded = getEmbeddedStoryResponse({ highlightId });
+        if (embedded) return Promise.resolve(embedded);
+      }
       const getURL = `https://www.instagram.com/graphql/query/?query_hash=45246d3fe16ccc6577e0bd297a5db1ab&variables=%7B%22highlight_reel_ids%22:%5B%22${highlightId}%22%5D,%22precomposed_overlay%22:false%7D`;
       return jsonRequest({ url: getURL, detectApiErrors: false }).catch((err) => {
         logger("getHighlightStories()", "reject", err.message);
         throw err;
       });
     }
-    function getStories(userId) {
+    function getStories(userId, options = {}) {
+      if (options.skipEmbedded !== true) {
+        const embedded = getEmbeddedStoryResponse({
+          userId,
+          username: options.username
+        });
+        if (embedded) return Promise.resolve(embedded);
+      }
       const getURL = `https://www.instagram.com/graphql/query/?query_hash=15463e8449a83d3d60b06be7e90627c7&variables=%7B%22reel_ids%22:%5B%22${userId}%22%5D,%22precomposed_overlay%22:false%7D`;
       return jsonRequest({ url: getURL, detectApiErrors: false }).then((obj) => {
         logger("getStories()", obj);
@@ -13720,6 +14085,17 @@
       }).catch((err) => {
         logger("getStories()", "reject", err.message);
         throw err;
+      });
+    }
+    async function getStoriesByUsername(username, options = {}) {
+      if (options.skipEmbedded !== true) {
+        const embedded = getEmbeddedStoryResponse({ username });
+        if (embedded) return embedded;
+      }
+      const userInfo = await getUserId(username);
+      return await getStories(userInfo.user.pk, {
+        skipEmbedded: true,
+        username
       });
     }
     async function getUserId(username) {
@@ -13800,10 +14176,59 @@
         throw err;
       });
     }
-    function getBlobMedia(postPath) {
+    function getBlobMediaWithQueryHash(postPath) {
       if (!postPath) return Promise.reject("NOPATH");
       const postShortCode = postPath;
       const getURL = `https://www.instagram.com/graphql/query/?query_hash=2c4c2e343a8f64c625ba02b2aa12c7f8&variables=%7B%22shortcode%22:%22${postShortCode}%22}`;
+      return jsonRequest({
+        url: getURL,
+        detectApiErrors: false,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Linux; Android 10; Pixel 7 XL)Build/RP1A.20845.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/5.0 Chrome/117.0.5938.60 Mobile Safari/537.36 Instagram 307.0.0.34.111"
+        }
+      }).then((obj) => {
+        logger(obj);
+        const resource = obj?.data?.shortcode_media;
+        if (resource != null && typeof resource === "object" && !Array.isArray(resource)) {
+          return { type: "query_hash", data: obj.data };
+        }
+        throw createLegacyRequestError(
+          "legacy_query_no_media",
+          obj?.status === "fail" ? obj?.message || "The legacy query rejected the media request." : "The legacy query returned no media."
+        );
+      });
+    }
+    function isMetadataRequestAbort(error) {
+      return error?.category === "abort" || error?.name === "AbortError" || error?.code === "operation_cancelled";
+    }
+    async function getReelMedia(postPath) {
+      const postShortCode = String(postPath || "");
+      if (!/^[A-Za-z0-9_-]{5,64}$/.test(postShortCode)) {
+        throw createLegacyRequestError(
+          "invalid_shortcode",
+          "A valid Instagram shortcode is required."
+        );
+      }
+      const embedded = getEmbeddedReelResponse(postShortCode);
+      if (embedded) return embedded;
+      try {
+        const data = await getBlobMediaWithQueryID(postShortCode, {
+          silent: true
+        });
+        return { type: "query_id", data };
+      } catch (error) {
+        if (isMetadataRequestAbort(error)) throw error;
+        logger(
+          "getReelMedia()",
+          "current query rejected; trying legacy query",
+          error?.code || error?.message || error
+        );
+        return await getBlobMediaWithQueryHash(postShortCode);
+      }
+    }
+    function getBlobMedia(postPath) {
+      const postShortCode = String(postPath || "");
+      if (!postShortCode) return Promise.reject("NOPATH");
       const requestWithQueryId = (reason) => {
         logger(
           "Request with:",
@@ -13816,31 +14241,13 @@
           data
         }));
       };
-      return jsonRequest({
-        url: getURL,
-        detectApiErrors: false,
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Linux; Android 10; Pixel 7 XL)Build/RP1A.20845.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/5.0 Chrome/117.0.5938.60 Mobile Safari/537.36 Instagram 307.0.0.34.111"
-        }
-      }).then(
-        (obj) => {
-          logger(obj);
-          const resource = obj?.data?.shortcode_media;
-          if (resource != null && typeof resource === "object" && !Array.isArray(resource)) {
-            return { type: "query_hash", data: obj.data };
-          }
-          return requestWithQueryId(
-            obj?.status === "fail" ? obj?.message || "legacy-query-failed" : "legacy-query-returned-no-media"
-          );
-        },
-        (err) => {
-          logger("getBlobMedia()", "legacy query rejected", err.message || err);
-          if (err?.category === "abort" || err?.name === "AbortError") {
-            throw err;
-          }
-          return requestWithQueryId(err?.message || "legacy-query-rejected");
-        }
-      );
+      return getBlobMediaWithQueryHash(postShortCode).catch((err) => {
+        logger("getBlobMedia()", "legacy query rejected", err.message || err);
+        if (isMetadataRequestAbort(err)) throw err;
+        return requestWithQueryId(
+          err?.message || "legacy-query-rejected"
+        );
+      });
     }
     function createLegacyRequestError(code, message, rateLimited = false) {
       const error = new Error(message);

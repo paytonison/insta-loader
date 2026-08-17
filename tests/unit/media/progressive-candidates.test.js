@@ -47,6 +47,34 @@ describe("maximum progressive candidate normalization", () => {
     }]);
   });
 
+  it("unwraps XIG bootstrap media before ranking progressive versions", () => {
+    const candidates = normalizeMaximumProgressiveCandidates({
+      xig_polaris_media: {
+        if_not_gated_logged_out: {
+          original_width: 1080,
+          original_height: 1920,
+          video_versions: [
+            {
+              url: "https://cdn.example.test/xig-720.mp4",
+              width: 720,
+              height: 1280,
+            },
+            {
+              url: "https://cdn.example.test/xig-1080.mp4",
+              width: 1080,
+              height: 1920,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(candidates.map((candidate) => candidate.url)).toEqual([
+      "https://cdn.example.test/xig-1080.mp4",
+      "https://cdn.example.test/xig-720.mp4",
+    ]);
+  });
+
   it("does not use video_url after a non-empty versions list is selected", () => {
     expect(normalizeMaximumProgressiveCandidates({
       video_url: "https://cdn.example.test/fallback.mp4",

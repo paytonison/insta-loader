@@ -1,5 +1,6 @@
 export * from "./action-service.js";
 export * from "./dash.js";
+export * from "./embedded-media-registry.js";
 export * from "./image-candidates.js";
 export * from "./normalizers.js";
 export * from "./progressive-candidates.js";

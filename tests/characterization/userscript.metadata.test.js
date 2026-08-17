@@ -22,7 +22,7 @@ describe("committed userscript metadata", () => {
 
   it("keeps the install and update contract", () => {
     expect(metadataValues("name")).toEqual(["insta-loader"]);
-    expect(metadataValues("version")).toEqual(["v1.3.3"]);
+    expect(metadataValues("version")).toEqual(["v1.3.4"]);
     expect(metadataValues("match")).toEqual(["https://*.instagram.com/*"]);
     expect(metadataValues("run-at")).toEqual(["document-start"]);
     expect(metadataValues("downloadURL")).toEqual([

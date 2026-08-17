@@ -424,7 +424,7 @@ export async function createUserscriptRuntime(options = {}) {
       downloadURL:
         "https://raw.githubusercontent.com/paytonison/insta-loader/main/insta-loader.user.js",
       name: "insta-loader",
-      version: "v1.3.3",
+      version: "v1.3.4",
     },
   };
   window.GM_getResourceText = vi.fn((name) => {

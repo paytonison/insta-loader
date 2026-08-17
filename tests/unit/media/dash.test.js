@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DashExecutionCoordinator,
+  normalizeInstagramDashRepresentationUrl,
   parseDashManifest,
 } from "../../../src/media/index.js";
 
@@ -106,6 +107,21 @@ describe("parseDashManifest", () => {
     expect(result.audio).toBeNull();
   });
 
+  it("recovers complete signed Instagram representations from range URLs", () => {
+    const manifest = `<?xml version="1.0"?>
+      <MPD xmlns="urn:mpeg:dash:schema:mpd:2011">
+        <Period><AdaptationSet contentType="video" mimeType="video/mp4">
+          <Representation id="signed" bandwidth="4000000" width="1080" height="1920">
+            <BaseURL>https://scontent-sea1-1.cdninstagram.com/v/t66/video.mp4?efg=asset%3D1&amp;oe=6A000000&amp;oh=signed-value&amp;bytestart=0&amp;byteend=31</BaseURL>
+          </Representation>
+        </AdaptationSet></Period>
+      </MPD>`;
+
+    expect(parse(manifest).video?.url).toBe(
+      "https://scontent-sea1-1.cdninstagram.com/v/t66/video.mp4?efg=asset%3D1&oe=6A000000&oh=signed-value",
+    );
+  });
+
   it.each([
     ["malformed", fixture("dash-malformed.mpd")],
     ["empty", fixture("dash-empty.mpd")],
@@ -116,6 +132,24 @@ describe("parseDashManifest", () => {
       video: null,
       audio: null,
     });
+  });
+});
+
+describe("normalizeInstagramDashRepresentationUrl", () => {
+  it("preserves signed parameters while removing only a valid byte range", () => {
+    expect(normalizeInstagramDashRepresentationUrl(
+      "https://instagram.fboi1-1.fna.fbcdn.net/video.mp4?oe=6A000000&oh=signed&bytestart=32&byteend=63&_nc_sid=fixture",
+    )).toBe(
+      "https://instagram.fboi1-1.fna.fbcdn.net/video.mp4?oe=6A000000&oh=signed&_nc_sid=fixture",
+    );
+  });
+
+  it.each([
+    "https://cdn.example.test/video.mp4?bytestart=0&byteend=31&oh=signed",
+    "https://scontent.cdninstagram.com/video.mp4?bytestart=nope&byteend=31&oh=signed",
+    "https://scontent.cdninstagram.com/video.mp4?bytestart=64&byteend=31&oh=signed",
+  ])("does not rewrite an unqualified URL: %s", (url) => {
+    expect(normalizeInstagramDashRepresentationUrl(url)).toBe(url);
   });
 });
 

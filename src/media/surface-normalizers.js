@@ -189,7 +189,32 @@ export function extractStoryReel(payload) {
     return reelsMedia[0];
   }
 
+  const roots = [payload, payload.data, payload?.data?.data].filter(isRecord);
+  for (const root of roots) {
+    const connection = root.xdt_api__v1__feed__reels_media__connection;
+    const node = connection?.edges?.[0]?.node;
+    if (isRecord(node) && Array.isArray(node.items)) return node;
+  }
+
   return Array.isArray(payload.items) ? payload : null;
+}
+
+/**
+ * Instagram's current XDT Story records use `media_type` and
+ * `video_versions`; the legacy GraphQL records use `is_video` and
+ * `video_resources`. Keep the compatibility rule in one place.
+ *
+ * @param {unknown} item
+ * @returns {boolean}
+ */
+export function isStoryVideoItem(item) {
+  if (!isRecord(item)) return false;
+  return (
+    item.is_video === true ||
+    Number(item.media_type) === 2 ||
+    (Array.isArray(item.video_resources) && item.video_resources.length > 0) ||
+    (Array.isArray(item.video_versions) && item.video_versions.length > 0)
+  );
 }
 
 /**
@@ -200,10 +225,17 @@ export function selectLargestStoryDisplayResource(resources) {
   if (!Array.isArray(resources) || resources.length === 0) return null;
 
   return [...resources].sort((left, right) => {
-    if (left?.config_width < right?.config_width) return 1;
-    if (left?.config_width > right?.config_width) return -1;
+    const leftWidth = Number(left?.config_width ?? left?.width) || 0;
+    const rightWidth = Number(right?.config_width ?? right?.width) || 0;
+    if (leftWidth < rightWidth) return 1;
+    if (leftWidth > rightWidth) return -1;
     return 0;
   })[0];
+}
+
+/** @param {Record<string, any> | null | undefined} resource */
+function getStoryResourceUrl(resource) {
+  return optionalString(resource?.src) ?? optionalString(resource?.url);
 }
 
 /**
@@ -212,18 +244,30 @@ export function selectLargestStoryDisplayResource(resources) {
  * @returns {string | null}
  */
 function selectStoryImageUrl(item, preference) {
-  const resources = Array.isArray(item.display_resources)
+  const legacyResources = Array.isArray(item.display_resources)
     ? item.display_resources
     : [];
+  const currentResources = Array.isArray(item?.image_versions2?.candidates)
+    ? item.image_versions2.candidates
+    : [];
+  const allResources = legacyResources.length
+    ? legacyResources
+    : currentResources;
 
   switch (preference) {
     case STORY_IMAGE_CANDIDATE.DISPLAY_URL:
-      return optionalString(item.display_url);
+      return optionalString(item.display_url) ??
+        getStoryResourceUrl(currentResources[0]) ??
+        getStoryResourceUrl(selectLargestStoryDisplayResource(allResources));
     case STORY_IMAGE_CANDIDATE.LAST:
-      return optionalString(resources.at(-1)?.src);
+      return legacyResources.length
+        ? getStoryResourceUrl(legacyResources.at(-1))
+        : getStoryResourceUrl(
+            selectLargestStoryDisplayResource(currentResources),
+          );
     case STORY_IMAGE_CANDIDATE.WIDEST:
-      return optionalString(
-        selectLargestStoryDisplayResource(resources)?.src,
+      return getStoryResourceUrl(
+        selectLargestStoryDisplayResource(allResources),
       );
     default:
       throw new TypeError(`Unknown Story image candidate: ${preference}`);
@@ -236,15 +280,20 @@ function selectStoryImageUrl(item, preference) {
  * @returns {string | null}
  */
 function selectStoryVideoUrl(item, preference) {
-  const resources = Array.isArray(item.video_resources)
+  const legacyResources = Array.isArray(item.video_resources)
     ? item.video_resources
+    : [];
+  const currentResources = Array.isArray(item.video_versions)
+    ? item.video_versions
     : [];
 
   switch (preference) {
     case STORY_VIDEO_CANDIDATE.FIRST:
-      return optionalString(resources[0]?.src);
+      return getStoryResourceUrl(legacyResources[0]) ??
+        getStoryResourceUrl(currentResources[0]);
     case STORY_VIDEO_CANDIDATE.LAST:
-      return optionalString(resources.at(-1)?.src);
+      return getStoryResourceUrl(legacyResources.at(-1)) ??
+        getStoryResourceUrl(currentResources[0]);
     default:
       throw new TypeError(`Unknown Story video candidate: ${preference}`);
   }
@@ -294,19 +343,19 @@ export function normalizeStorySurfaceMedia(
   return items.flatMap((item, index) => {
     if (!isRecord(item)) return [];
 
-    const isVideo = item.is_video === true;
+    const isVideo = isStoryVideoItem(item);
     const imageUrl = selectStoryImageUrl(item, imageCandidate);
     const descriptor = createSurfaceDescriptor({
-      mediaId: item.id,
+      mediaId: item.pk ?? item.id,
       directUrl: isVideo
         ? selectStoryVideoUrl(item, videoCandidate)
         : imageUrl,
       thumbnailUrl: imageUrl,
       kind: isVideo ? "video" : "image",
-      owner,
-      shortcode: item.id,
+      owner: owner ?? getOwner(item),
+      shortcode: item.code ?? item.id ?? item.pk,
       publishTime: renamePublishDate
-        ? item.taken_at_timestamp ?? nowSeconds
+        ? item.taken_at_timestamp ?? item.taken_at ?? nowSeconds
         : nowSeconds,
       carouselIndex: index + 1,
       rawMediaItem: item,
@@ -391,6 +440,14 @@ function extractReelItems(response, responseType) {
     return isRecord(resource) ? [resource] : [];
   }
 
+  const xigMedia = payload.xig_polaris_media ?? envelope.xig_polaris_media;
+  if (isRecord(xigMedia)) {
+    const resource = xigMedia.if_not_gated_logged_out ??
+      xigMedia.if_not_gated ??
+      xigMedia;
+    return isRecord(resource) ? [resource] : [];
+  }
+
   const xdtItems = payload?.xdt_api__v1__media__shortcode__web_info?.items;
   if (Array.isArray(xdtItems)) return xdtItems.filter(isRecord);
   if (Array.isArray(payload.items)) return payload.items.filter(isRecord);
@@ -426,17 +483,20 @@ export function normalizeReelMedia(
       : [];
     const thumbnailUrl = responseType === "query_hash"
       ? optionalString(displayResources.at(-1)?.src)
-      : optionalString(imageCandidates[0]?.url);
+      : optionalString(imageCandidates[0]?.url) ??
+        optionalString(displayResources.at(-1)?.src);
     const resourceIsVideo = responseType === "query_hash"
       ? item.is_video === true
-      : item.video_versions != null;
+      : Number(item.media_type) === 2 ||
+        (Array.isArray(item.video_versions) && item.video_versions.length > 0) ||
+        optionalString(item.video_url) !== null;
     const useVideo = typeof isVideo === "boolean"
       ? isVideo && resourceIsVideo
       : resourceIsVideo;
     const directUrl = useVideo
       ? responseType === "query_hash"
         ? item.video_url
-        : item?.video_versions?.[0]?.url
+        : item?.video_versions?.[0]?.url ?? item.video_url
       : thumbnailUrl;
     const descriptor = createSurfaceDescriptor({
       mediaId: item.pk ?? item.id,
@@ -447,7 +507,7 @@ export function normalizeReelMedia(
       shortcode: shortcode ?? item.code ?? item.shortcode,
       publishTime: responseType === "query_hash"
         ? item.taken_at_timestamp
-        : item.taken_at,
+        : item.taken_at ?? item.taken_at_timestamp,
       carouselIndex: index + 1,
       rawMediaItem: item,
       dashManifest: item.video_dash_manifest,

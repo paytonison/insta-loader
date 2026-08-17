@@ -1759,6 +1759,32 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     keySettingsHotkeyKeyCode: preferences.hotkeys.keySettings,
     downloadStoryHotkeyKeyCode: preferences.hotkeys.downloadStory,
   };
+  const embeddedMediaRegistry = new media.EmbeddedMediaRegistry();
+  const embeddedStoryPayloads = new WeakSet();
+
+  function getEmbeddedReelResponse(shortcode) {
+    embeddedMediaRegistry.scan(document);
+    const item = embeddedMediaRegistry.getReel(shortcode);
+    if (!item) return null;
+
+    logger("EmbeddedMediaRegistry", "Reel hit", shortcode);
+    return {
+      type: "query_id",
+      data: {
+        xig_polaris_media: { if_not_gated_logged_out: item },
+      },
+    };
+  }
+
+  function getEmbeddedStoryResponse(identity) {
+    embeddedMediaRegistry.scan(document, identity);
+    const payload = embeddedMediaRegistry.getStory(identity);
+    if (!payload) return null;
+
+    embeddedStoryPayloads.add(payload);
+    logger("EmbeddedMediaRegistry", "Story hit", identity);
+    return payload;
+  }
   const legacyVideoVolumeState = {
     get: () => state.videoVolume,
     set(value) {
@@ -3283,6 +3309,16 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     };
   }
 
+  function hasDeliveredCurrentMedia(descriptor) {
+    const item = descriptor?.rawMediaItem;
+    const imageCandidates = item?.image_versions2?.candidates;
+    if (!Array.isArray(imageCandidates) || imageCandidates.length === 0) {
+      return false;
+    }
+    if (descriptor.kind !== "video") return true;
+    return Array.isArray(item.video_versions) && item.video_versions.length > 0;
+  }
+
   /**
    * Own the visible lifecycle of one user-triggered Story/Highlight action.
    * Repeated clicks share the pending action instead of starting duplicate
@@ -3332,13 +3368,16 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
     actionLifecycle,
   ) {
     throwIfStorySurfaceActionCancelled(actionLifecycle);
+    const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
     return await executeMediaDescriptor(
       descriptor,
       media.MEDIA_INTENT.DOWNLOAD,
       {
         ...createStorySurfaceMediaActionOptions(actionLifecycle),
+        dashBeforeMediaApi: hasDeliveredMedia,
         useMediaApi:
           allowDash &&
+          !hasDeliveredMedia &&
           descriptor.kind === "video" &&
           !state.tempFetchRateLimit,
         useDash: allowDash,
@@ -3457,7 +3496,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       );
 
       if (actionContext.mediaApiPolicy.renamePublishDate) {
-        timestamp = target.taken_at_timestamp;
+        timestamp = target.taken_at_timestamp ?? target.taken_at;
       }
 
       const descriptor = normalizeLegacyStoryCurrentDescriptor(
@@ -3471,6 +3510,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       if (!descriptor) {
         throw new Error("Cannot resolve the current Highlight resource.");
       }
+      const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
 
       let usedImageCache = false;
       await executeMediaDescriptor(
@@ -3480,6 +3520,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           : media.MEDIA_INTENT.DOWNLOAD,
         {
           ...createStorySurfaceMediaActionOptions(actionLifecycle),
+          dashBeforeMediaApi: hasDeliveredMedia,
           defaultTimestamp: timestamp,
           deferMediaApiRequestFailureAlert: true,
           includeIndex: false,
@@ -3510,7 +3551,9 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           useDash: actionContext.mediaApiPolicy.requestDash,
           useDashForPreview: actionContext.mediaApiPolicy.requestDash,
           useImageCache: actionContext.mediaApiPolicy.useImageCache,
-          useMediaApi: actionContext.mediaApiPolicy.requestMediaApi,
+          useMediaApi:
+            actionContext.mediaApiPolicy.requestMediaApi &&
+            !hasDeliveredMedia,
         },
       );
 
@@ -3624,7 +3667,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       username = actionContext.owner || username;
 
       if (actionContext.mediaApiPolicy.renamePublishDate) {
-        timestamp = target.taken_at_timestamp;
+        timestamp = target.taken_at_timestamp ?? target.taken_at;
       }
 
       const descriptor = normalizeLegacyStoryCurrentDescriptor(
@@ -3638,6 +3681,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       if (!descriptor) {
         throw new Error("Cannot resolve the current Highlight thumbnail.");
       }
+      const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
 
       let usedImageCache = false;
       await executeMediaDescriptor(
@@ -3675,7 +3719,9 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
           thumbnailSourceType: "highlights",
           useDash: false,
           useImageCache: actionContext.mediaApiPolicy.useImageCache,
-          useMediaApi: actionContext.mediaApiPolicy.requestMediaApi,
+          useMediaApi:
+            actionContext.mediaApiPolicy.requestMediaApi &&
+            !hasDeliveredMedia,
         },
       );
 
@@ -4919,13 +4965,10 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       if (isDownload) {
         updateLoadingBar(true);
 
-        let reelsPath = location.href
-          .split("?")
-          .at(0)
-          .split("instagram.com/reels/")
-          .at(-1)
-          .replaceAll("/", "");
-        let result = await getBlobMedia(reelsPath);
+        const reelsPath = location.pathname.match(
+          /\/(?:reel|reels)\/([A-Za-z0-9_-]{5,64})(?:\/|$)/,
+        )?.[1];
+        let result = await getReelMedia(reelsPath);
         const descriptor = media.normalizeReelMedia(result, {
           isVideo,
           shortcode: reelsPath,
@@ -5232,10 +5275,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         .filter((s) => s.length > 0)
         .at(1);
 
-    let userInfo = await getUserId(username);
-    throwIfStorySurfaceActionCancelled(actionLifecycle);
-    let userId = userInfo.user.pk;
-    let stories = await getStories(userId);
+    let stories = await getStoriesByUsername(username);
     throwIfStorySurfaceActionCancelled(actionLifecycle);
 
     if (USER_SETTING.DIRECT_DOWNLOAD_STORY) {
@@ -5289,10 +5329,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         { intent },
       );
       if (initialMediaApiPolicy.requestMediaApi) {
-        let userInfo = await getUserId(username);
-        throwIfStorySurfaceActionCancelled(actionLifecycle);
-        let userId = userInfo.user.pk;
-        let stories = await getStories(userId);
+        let stories = await getStoriesByUsername(username);
         throwIfStorySurfaceActionCancelled(actionLifecycle);
         const domState = readLegacyStoryDomState();
         const actionContext = createLegacyStoryActionContext(
@@ -5317,6 +5354,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
             surface: STORY_SURFACE.STORY,
           },
         );
+        const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
 
         let usedImageCache = false;
         await executeMediaDescriptor(
@@ -5326,6 +5364,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
             : media.MEDIA_INTENT.DOWNLOAD,
           {
             ...createStorySurfaceMediaActionOptions(actionLifecycle),
+            dashBeforeMediaApi: hasDeliveredMedia,
             defaultTimestamp: timestamp,
             deferMediaApiRequestFailureAlert: true,
             includeIndex: false,
@@ -5358,7 +5397,9 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
             useDash: actionContext.mediaApiPolicy.requestDash,
             useDashForPreview: actionContext.mediaApiPolicy.requestDash,
             useImageCache: actionContext.mediaApiPolicy.useImageCache,
-            useMediaApi: actionContext.mediaApiPolicy.requestMediaApi,
+            useMediaApi:
+              actionContext.mediaApiPolicy.requestMediaApi &&
+              !hasDeliveredMedia,
           },
         );
 
@@ -5375,13 +5416,12 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         if (state.GL_dataCache.stories[username] && !isForce) {
           logger("Fetch from memory cache:", username);
           stories = state.GL_dataCache.stories[username];
-          } else {
-            let userInfo = await getUserId(username);
-            throwIfStorySurfaceActionCancelled(actionLifecycle);
-            let userId = userInfo.user.pk;
-            stories = await getStories(userId);
-            throwIfStorySurfaceActionCancelled(actionLifecycle);
-            fetchedStories = true;
+        } else {
+          stories = await getStoriesByUsername(username, {
+            skipEmbedded: isForce,
+          });
+          throwIfStorySurfaceActionCancelled(actionLifecycle);
+          fetchedStories = !embeddedStoryPayloads.has(stories);
           state.GL_dataCache.stories[username] = stories;
         }
 
@@ -5626,10 +5666,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         { intent: STORY_INTENT.THUMBNAIL },
       );
       if (initialMediaApiPolicy.requestMediaApi) {
-        let userInfo = await getUserId(username);
-        throwIfStorySurfaceActionCancelled(actionLifecycle);
-        let userId = userInfo.user.pk;
-        let stories = await getStories(userId);
+        let stories = await getStoriesByUsername(username);
         throwIfStorySurfaceActionCancelled(actionLifecycle);
         const domState = readLegacyStoryDomState();
         const actionContext = createLegacyStoryActionContext(
@@ -5655,6 +5692,7 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
             surface: STORY_SURFACE.STORY,
           },
         );
+        const hasDeliveredMedia = hasDeliveredCurrentMedia(descriptor);
 
         let usedImageCache = false;
         await executeMediaDescriptor(
@@ -5693,7 +5731,9 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
             thumbnailSourceType: "stories",
             useDash: false,
             useImageCache: actionContext.mediaApiPolicy.useImageCache,
-            useMediaApi: actionContext.mediaApiPolicy.requestMediaApi,
+            useMediaApi:
+              actionContext.mediaApiPolicy.requestMediaApi &&
+              !hasDeliveredMedia,
           },
         );
 
@@ -5708,12 +5748,11 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         logger("Fetch from memory cache:", username);
         stories = state.GL_dataCache.stories[username];
       } else {
-        let userInfo = await getUserId(username);
+        stories = await getStoriesByUsername(username, {
+          skipEmbedded: isForce,
+        });
         throwIfStorySurfaceActionCancelled(actionLifecycle);
-        let userId = userInfo.user.pk;
-        stories = await getStories(userId);
-        throwIfStorySurfaceActionCancelled(actionLifecycle);
-        fetchedStories = true;
+        fetchedStories = !embeddedStoryPayloads.has(stories);
       }
 
       const domState = readLegacyStoryDomState();
@@ -5829,7 +5868,12 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @param  {Integer}  highlightId
    * @return {Object}
    */
-  function getHighlightStories(highlightId) {
+  function getHighlightStories(highlightId, options = {}) {
+    if (options.skipEmbedded !== true) {
+      const embedded = getEmbeddedStoryResponse({ highlightId });
+      if (embedded) return Promise.resolve(embedded);
+    }
+
     const getURL = `https://www.instagram.com/graphql/query/?query_hash=45246d3fe16ccc6577e0bd297a5db1ab&variables=%7B%22highlight_reel_ids%22:%5B%22${highlightId}%22%5D,%22precomposed_overlay%22:false%7D`;
     return jsonRequest({ url: getURL, detectApiErrors: false }).catch((err) => {
       logger("getHighlightStories()", "reject", err.message);
@@ -5842,9 +5886,18 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
    * @description Get a list of all stories in user Id.
    *
    * @param  {Integer}  userId
+   * @param  {Object}  options
    * @return {Object}
    */
-  function getStories(userId) {
+  function getStories(userId, options = {}) {
+    if (options.skipEmbedded !== true) {
+      const embedded = getEmbeddedStoryResponse({
+        userId,
+        username: options.username,
+      });
+      if (embedded) return Promise.resolve(embedded);
+    }
+
     const getURL = `https://www.instagram.com/graphql/query/?query_hash=15463e8449a83d3d60b06be7e90627c7&variables=%7B%22reel_ids%22:%5B%22${userId}%22%5D,%22precomposed_overlay%22:false%7D`;
     return jsonRequest({ url: getURL, detectApiErrors: false })
       .then((obj) => {
@@ -5855,6 +5908,19 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
         logger("getStories()", "reject", err.message);
         throw err;
       });
+  }
+
+  async function getStoriesByUsername(username, options = {}) {
+    if (options.skipEmbedded !== true) {
+      const embedded = getEmbeddedStoryResponse({ username });
+      if (embedded) return embedded;
+    }
+
+    const userInfo = await getUserId(username);
+    return await getStories(userInfo.user.pk, {
+      skipEmbedded: true,
+      username,
+    });
   }
 
   /**
@@ -5990,16 +6056,98 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
   }
 
   /**
+   * getBlobMediaWithQueryHash
+   * @description Use the legacy post query without triggering another lookup.
+   *
+   * @param  {String}  postPath
+   * @return {Object}
+   */
+  function getBlobMediaWithQueryHash(postPath) {
+    if (!postPath) return Promise.reject("NOPATH");
+    const postShortCode = postPath;
+    const getURL = `https://www.instagram.com/graphql/query/?query_hash=2c4c2e343a8f64c625ba02b2aa12c7f8&variables=%7B%22shortcode%22:%22${postShortCode}%22}`;
+
+    return jsonRequest({
+      url: getURL,
+      detectApiErrors: false,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Linux; Android 10; Pixel 7 XL)Build/RP1A.20845.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/5.0 Chrome/117.0.5938.60 Mobile Safari/537.36 Instagram 307.0.0.34.111",
+      },
+    }).then((obj) => {
+      logger(obj);
+      const resource = obj?.data?.shortcode_media;
+      if (
+        resource != null &&
+        typeof resource === "object" &&
+        !Array.isArray(resource)
+      ) {
+        return { type: "query_hash", data: obj.data };
+      }
+
+      throw createLegacyRequestError(
+        "legacy_query_no_media",
+        obj?.status === "fail"
+          ? obj?.message || "The legacy query rejected the media request."
+          : "The legacy query returned no media.",
+      );
+    });
+  }
+
+  function isMetadataRequestAbort(error) {
+    return (
+      error?.category === "abort" ||
+      error?.name === "AbortError" ||
+      error?.code === "operation_cancelled"
+    );
+  }
+
+  /**
+   * Resolve Reel metadata in the order supported by Instagram's current
+   * delivery: already-delivered bootstrap JSON, current query ID, then the
+   * legacy query hash as a last compatibility fallback.
+   *
+   * @param {String} postPath
+   * @return {Promise<Object>}
+   */
+  async function getReelMedia(postPath) {
+    const postShortCode = String(postPath || "");
+    if (!/^[A-Za-z0-9_-]{5,64}$/.test(postShortCode)) {
+      throw createLegacyRequestError(
+        "invalid_shortcode",
+        "A valid Instagram shortcode is required.",
+      );
+    }
+
+    const embedded = getEmbeddedReelResponse(postShortCode);
+    if (embedded) return embedded;
+
+    try {
+      const data = await getBlobMediaWithQueryID(postShortCode, {
+        silent: true,
+      });
+      return { type: "query_id", data };
+    } catch (error) {
+      if (isMetadataRequestAbort(error)) throw error;
+      logger(
+        "getReelMedia()",
+        "current query rejected; trying legacy query",
+        error?.code || error?.message || error,
+      );
+      return await getBlobMediaWithQueryHash(postShortCode);
+    }
+  }
+
+  /**
    * getBlobMedia
-   * @description Get list of all media files in post with post shortcode.
+   * @description Preserve the post path's legacy-first lookup order.
    *
    * @param  {String}  postPath
    * @return {Object}
    */
   function getBlobMedia(postPath) {
-    if (!postPath) return Promise.reject("NOPATH");
-    const postShortCode = postPath;
-    const getURL = `https://www.instagram.com/graphql/query/?query_hash=2c4c2e343a8f64c625ba02b2aa12c7f8&variables=%7B%22shortcode%22:%22${postShortCode}%22}`;
+    const postShortCode = String(postPath || "");
+    if (!postShortCode) return Promise.reject("NOPATH");
 
     const requestWithQueryId = (reason) => {
       logger(
@@ -6014,39 +6162,13 @@ export function startLegacyUserscript($, Mediabunny, dependencies) {
       }));
     };
 
-    return jsonRequest({
-      url: getURL,
-      detectApiErrors: false,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Linux; Android 10; Pixel 7 XL)Build/RP1A.20845.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/5.0 Chrome/117.0.5938.60 Mobile Safari/537.36 Instagram 307.0.0.34.111",
-      },
-    }).then(
-      (obj) => {
-        logger(obj);
-        const resource = obj?.data?.shortcode_media;
-        if (
-          resource != null &&
-          typeof resource === "object" &&
-          !Array.isArray(resource)
-        ) {
-          return { type: "query_hash", data: obj.data };
-        }
-
-        return requestWithQueryId(
-          obj?.status === "fail"
-            ? obj?.message || "legacy-query-failed"
-            : "legacy-query-returned-no-media",
-        );
-      },
-      (err) => {
-        logger("getBlobMedia()", "legacy query rejected", err.message || err);
-        if (err?.category === "abort" || err?.name === "AbortError") {
-          throw err;
-        }
-        return requestWithQueryId(err?.message || "legacy-query-rejected");
-      },
-    );
+    return getBlobMediaWithQueryHash(postShortCode).catch((err) => {
+      logger("getBlobMedia()", "legacy query rejected", err.message || err);
+      if (isMetadataRequestAbort(err)) throw err;
+      return requestWithQueryId(
+        err?.message || "legacy-query-rejected",
+      );
+    });
   }
 
   /**

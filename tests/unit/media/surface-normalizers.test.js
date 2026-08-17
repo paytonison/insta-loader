@@ -121,6 +121,70 @@ describe("Story and Highlight normalization", () => {
     });
   });
 
+  it("normalizes the current XDT Story connection and media fields", () => {
+    const currentPayload = {
+      data: {
+        xdt_api__v1__feed__reels_media__connection: {
+          edges: [
+            {
+              node: {
+                id: "highlight:18142207969557132",
+                user: { username: "current_story_owner" },
+                items: [
+                  {
+                    id: "3811480328699137079_25025320",
+                    pk: "3811480328699137079",
+                    media_type: 2,
+                    taken_at: 1_711_000_001,
+                    image_versions2: {
+                      candidates: [
+                        {
+                          url: "https://cdn.example.test/current-small.jpg",
+                          width: 320,
+                          height: 569,
+                        },
+                        {
+                          url: "https://cdn.example.test/current-poster.jpg",
+                          width: 1080,
+                          height: 1920,
+                        },
+                      ],
+                    },
+                    video_versions: [
+                      {
+                        url: "https://cdn.example.test/current-video.mp4",
+                        width: 720,
+                        height: 1280,
+                      },
+                    ],
+                    video_dash_manifest: "<MPD>current-story</MPD>",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    const [descriptor] = normalizeHighlightMedia(currentPayload, {
+      renamePublishDate: true,
+      nowSeconds: 1_800_000_004,
+    });
+
+    expect(descriptor).toMatchObject({
+      mediaId: "3811480328699137079",
+      directUrl: "https://cdn.example.test/current-video.mp4",
+      thumbnailUrl: "https://cdn.example.test/current-poster.jpg",
+      kind: "video",
+      owner: "current_story_owner",
+      shortcode: "3811480328699137079_25025320",
+      publishTime: 1_711_000_001,
+      dashManifest: "<MPD>current-story</MPD>",
+      sourceType: "highlights",
+    });
+  });
+
   it("rejects invalid surface policy inputs", () => {
     expect(() =>
       normalizeStorySurfaceMedia(fixture.story, {
@@ -198,6 +262,42 @@ describe("Reel normalization", () => {
     expect(thumbnail.directUrl).toBe(
       "https://cdn.example.test/api-reel-poster-first.jpg",
     );
+  });
+
+  it("unwraps current XIG Reel bootstrap metadata", () => {
+    const item = {
+      pk: "current-reel-1",
+      code: "CurrentReel1",
+      media_type: 2,
+      taken_at: 1_713_000_001,
+      user: { username: "current_reel_owner" },
+      image_versions2: {
+        candidates: [
+          { url: "https://cdn.example.test/current-reel-poster.jpg" },
+        ],
+      },
+      video_versions: [
+        { url: "https://cdn.example.test/current-reel-first.mp4" },
+        { url: "https://cdn.example.test/current-reel-second.mp4" },
+      ],
+    };
+    const [descriptor] = normalizeReelMedia({
+      type: "embedded",
+      data: {
+        xig_polaris_media: { if_not_gated_logged_out: item },
+      },
+    });
+
+    expect(descriptor).toMatchObject({
+      mediaId: "current-reel-1",
+      directUrl: "https://cdn.example.test/current-reel-first.mp4",
+      thumbnailUrl: "https://cdn.example.test/current-reel-poster.jpg",
+      kind: "video",
+      owner: "current_reel_owner",
+      shortcode: "CurrentReel1",
+      publishTime: 1_713_000_001,
+    });
+    expect(descriptor.rawMediaItem).toBe(item);
   });
 
   it("normalizes feed envelopes without losing one-based item identity", () => {

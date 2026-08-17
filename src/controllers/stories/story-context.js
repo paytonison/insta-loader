@@ -1,5 +1,7 @@
 import { resolveCurrentStoryItem } from "./current-item.js";
 import {
+  extractStoryReel,
+  isStoryVideoItem,
   normalizeStorySurfaceMedia,
   selectLargestStoryDisplayResource,
 } from "../../media/surface-normalizers.js";
@@ -22,8 +24,7 @@ export const STORY_INTENT = Object.freeze({
  * @return {Record<string, any> | null}
  */
 export function getStoryReel(payload) {
-  const reel = payload?.data?.reels_media?.[0];
-  return reel && typeof reel === "object" ? reel : null;
+  return extractStoryReel(payload);
 }
 
 /**
@@ -93,7 +94,7 @@ export function getStoryMediaApiPolicyInputs(
   const useImageCache =
     captureImageViaMediaCache &&
     (intent === STORY_INTENT.THUMBNAIL ||
-      (item != null && item?.is_video !== true));
+      (item != null && !isStoryVideoItem(item)));
   const preferDashManifest = Boolean(settings?.PREFER_DASH_MANIFEST);
 
   return {
@@ -110,7 +111,7 @@ export function getStoryMediaApiPolicyInputs(
       requestMediaApi &&
       preferDashManifest &&
       intent !== STORY_INTENT.THUMBNAIL &&
-      item?.is_video === true,
+      isStoryVideoItem(item),
     renamePublishDate: Boolean(settings?.RENAME_PUBLISH_DATE),
   };
 }
@@ -121,13 +122,17 @@ export function getStoryMediaApiPolicyInputs(
  * @return {Object}
  */
 export function getStoryThumbnailMetadata(item, domMetadata) {
-  const largestDisplay = selectLargestStoryDisplayResource(
-    item?.display_resources,
-  );
-  const displayUrl = item?.display_url || largestDisplay?.src || null;
+  const displayResources = Array.isArray(item?.display_resources)
+    ? item.display_resources
+    : item?.image_versions2?.candidates;
+  const largestDisplay = selectLargestStoryDisplayResource(displayResources);
+  const displayUrl = item?.display_url ||
+    largestDisplay?.src ||
+    largestDisplay?.url ||
+    null;
 
   return {
-    mediaId: item?.id ?? null,
+    mediaId: item?.pk ?? item?.id ?? null,
     displayUrl,
     posterUrl: domMetadata?.posterUrl || null,
     available: Boolean(domMetadata?.available || displayUrl),

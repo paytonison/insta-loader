@@ -46,7 +46,11 @@ export function extractMaximumProgressiveItem(data) {
     return null;
   }
 
+  const xigMedia = data.xig_polaris_media;
   const item =
+    xigMedia?.if_not_gated_logged_out ||
+    xigMedia?.if_not_gated ||
+    xigMedia ||
     data.xdt_api__v1__media__shortcode__web_info?.items?.[0] ||
     data.shortcode_media ||
     data.items?.[0] ||

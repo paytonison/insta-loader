@@ -127,6 +127,54 @@ describe("Story/Highlight action context", () => {
       renamePublishDate: true,
     });
   });
+
+  it("treats current media_type Story records as videos", () => {
+    const item = {
+      id: "current-story-video",
+      pk: "current-story-pk",
+      media_type: 2,
+      taken_at: 1_720_000_001,
+      image_versions2: {
+        candidates: [
+          {
+            url: "https://cdn.example/current-story-poster.jpg",
+            width: 1080,
+            height: 1920,
+          },
+        ],
+      },
+      video_versions: [
+        { url: "https://cdn.example/current-story-video.mp4" },
+      ],
+    };
+    const context = createStoryActionContext({
+      surface: STORY_SURFACE.STORY,
+      payload: {
+        xdt_api__v1__feed__reels_media__connection: {
+          edges: [{ node: { user: { username: "fixture_user" }, items: [item] } }],
+        },
+      },
+      domState: {
+        username: "fixture_user",
+        identity: { explicitMediaId: item.pk },
+        thumbnail: { available: false, posterUrl: null },
+      },
+      settings: enabledSettings,
+      runtimeState: { tempFetchRateLimit: false },
+      intent: STORY_INTENT.DOWNLOAD,
+    });
+
+    expect(context.current.item).toBe(item);
+    expect(context.mediaApiPolicy).toMatchObject({
+      requestDash: true,
+      useImageCache: false,
+    });
+    expect(context.thumbnail).toMatchObject({
+      mediaId: item.pk,
+      displayUrl: "https://cdn.example/current-story-poster.jpg",
+      available: true,
+    });
+  });
 });
 
 describe("Story/Highlight batch descriptors", () => {

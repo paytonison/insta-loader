@@ -59,11 +59,12 @@ export function parseDashManifest(mpdXml, options = {}) {
 function normalizeRepresentation(representation) {
   const base = representation.querySelector("BaseURL")?.textContent?.trim();
   if (!base || !isHttpsUrl(base)) return null;
+  const url = normalizeInstagramDashRepresentationUrl(base);
 
   const adaptationSet = representation.closest("AdaptationSet");
   return {
     id: representation.getAttribute("id") || "",
-    url: base,
+    url,
     mimeType:
       representation.getAttribute("mimeType") ||
       adaptationSet?.getAttribute("mimeType") ||
@@ -77,6 +78,43 @@ function normalizeRepresentation(representation) {
     width: positiveInteger(representation.getAttribute("width")),
     height: positiveInteger(representation.getAttribute("height")),
   };
+}
+
+/**
+ * Instagram sometimes exposes the signed representation URL used for one
+ * playback range. The same signature authorizes the complete representation
+ * when only `bytestart` and `byteend` are removed. Never rewrite another host
+ * or discard signature, expiry, or asset-identity parameters.
+ *
+ * @param {string} value
+ * @return {string}
+ */
+export function normalizeInstagramDashRepresentationUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch (_error) {
+    return value;
+  }
+
+  const hostname = url.hostname.toLowerCase();
+  const isInstagramCdn =
+    hostname === "cdninstagram.com" ||
+    hostname.endsWith(".cdninstagram.com") ||
+    hostname === "fbcdn.net" ||
+    hostname.endsWith(".fbcdn.net");
+  if (url.protocol !== "https:" || !isInstagramCdn) return value;
+
+  const start = url.searchParams.get("bytestart");
+  const end = url.searchParams.get("byteend");
+  if (!/^\d+$/.test(start || "") || !/^\d+$/.test(end || "")) {
+    return value;
+  }
+  if (Number(end) < Number(start)) return value;
+
+  url.searchParams.delete("bytestart");
+  url.searchParams.delete("byteend");
+  return url.href;
 }
 
 /** @param {unknown} value @return {number} */

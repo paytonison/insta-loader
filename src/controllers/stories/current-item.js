@@ -43,7 +43,11 @@ function findItemIndexById(items, mediaId) {
   const normalizedId = normalizeId(mediaId);
   if (normalizedId === null) return -1;
 
-  return items.findIndex((item) => normalizeId(item?.id) === normalizedId);
+  return items.findIndex((item) =>
+    [item?.pk, item?.id].some((candidate) =>
+      normalizeId(candidate) === normalizedId
+    )
+  );
 }
 
 /**
@@ -60,7 +64,7 @@ function resolutionAt(items, index, source) {
   const item = items[index];
   return {
     item,
-    mediaId: item?.id ?? null,
+    mediaId: item?.pk ?? item?.id ?? null,
     itemIndex: index,
     source,
   };
@@ -99,7 +103,8 @@ export function resolveCurrentStoryItem(items, hints = {}) {
 
     candidates.forEach((item, index) => {
       const difference = Math.abs(
-        (Number(item?.taken_at_timestamp) || 0) - hints.visibleTimestamp,
+        (Number(item?.taken_at_timestamp ?? item?.taken_at) || 0) -
+          hints.visibleTimestamp,
       );
       if (difference < minimumDifference) {
         minimumDifference = difference;
@@ -135,7 +140,11 @@ export function resolveCurrentStoryItem(items, hints = {}) {
     return {
       item: routeIndex >= 0 ? candidates[routeIndex] : null,
       mediaId:
-        routeIndex >= 0 ? candidates[routeIndex]?.id ?? routeMediaId : routeMediaId,
+        routeIndex >= 0
+          ? candidates[routeIndex]?.pk ??
+            candidates[routeIndex]?.id ??
+            routeMediaId
+          : routeMediaId,
       itemIndex: routeIndex >= 0 ? routeIndex : null,
       source: CURRENT_ITEM_SOURCE.ROUTE_FALLBACK,
     };

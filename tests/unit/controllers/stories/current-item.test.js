@@ -45,6 +45,37 @@ describe("resolveCurrentStoryItem", () => {
     });
   });
 
+  it("matches current Story route IDs against pk and uses taken_at", () => {
+    const currentItems = [
+      {
+        id: "3811480328699137079_25025320",
+        pk: "3811480328699137079",
+        taken_at: 1_710_000_000,
+      },
+      {
+        id: "3811480328699137080_25025320",
+        pk: "3811480328699137080",
+        taken_at: 1_710_000_060,
+      },
+    ];
+
+    expect(resolveCurrentStoryItem(currentItems, {
+      explicitMediaId: "3811480328699137079",
+    })).toMatchObject({
+      item: currentItems[0],
+      mediaId: "3811480328699137079",
+      source: CURRENT_ITEM_SOURCE.EXPLICIT_URL,
+    });
+    expect(resolveCurrentStoryItem(currentItems, {
+      explicitMediaId: "unmatched",
+      visibleTimestamp: 1_710_000_055,
+    })).toMatchObject({
+      item: currentItems[1],
+      mediaId: "3811480328699137080",
+      source: CURRENT_ITEM_SOURCE.TIMESTAMP,
+    });
+  });
+
   it("uses progress before layout and layout when progress is unavailable", () => {
     expect(
       resolveCurrentStoryItem(items, {

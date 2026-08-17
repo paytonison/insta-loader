@@ -17,11 +17,14 @@ const profileHtml = `<!doctype html>
     </body>
   </html>`;
 
-function reelHtml(actionClass) {
+function reelHtml(actionClass, embeddedPayload = null) {
   return `<!doctype html>
     <html style="display:block;visibility:visible;opacity:1">
       <head>
         <script type="application/json">{"APP_ID":"936619743392459"}</script>
+        ${embeddedPayload
+          ? `<script type="application/json">${JSON.stringify(embeddedPayload)}</script>`
+          : ""}
       </head>
       <body style="display:block;visibility:visible;opacity:1">
         <div id="mount_0">
@@ -202,7 +205,7 @@ describe("profile avatar MediaDescriptor action integration", () => {
 });
 
 describe("ordinary Reel MediaDescriptor action integration", () => {
-  it("downloads the legacy query-hash video without Media API or DASH ownership", async () => {
+  it("falls back from the current Reel query to the legacy query hash", async () => {
     const app = await runtime({
       html: reelHtml("IG_REELS"),
       network: [
@@ -225,7 +228,13 @@ describe("ordinary Reel MediaDescriptor action integration", () => {
       name: "fixture_reel_owner-reels-RouteReel1-0.mp4",
       url: "https://instagram.ftpe8-2.fna.fbcdn.net/reel-video.mp4",
     });
-    expect(metadataRequests(app)).toHaveLength(1);
+    expect(metadataRequests(app)).toHaveLength(2);
+    expect(metadataRequests(app)[0].url).toContain(
+      "query_id=9496392173716084",
+    );
+    expect(metadataRequests(app)[1].url).toContain(
+      "query_hash=2c4c2e343a8f64c625ba02b2aa12c7f8",
+    );
     expect(
       app.requests.filter((request) => request.url.includes("/api/v1/media/")),
     ).toHaveLength(0);
@@ -278,7 +287,7 @@ describe("ordinary Reel MediaDescriptor action integration", () => {
     });
   });
 
-  it("keeps query-ID fallback on the first API video candidate", async () => {
+  it("uses the current query directly and keeps its first video candidate", async () => {
     const queryIdPayload = {
       data: {
         xdt_api__v1__media__shortcode__web_info: {
@@ -332,11 +341,52 @@ describe("ordinary Reel MediaDescriptor action integration", () => {
     click(app, ".IG_REELS");
     await app.flushMicrotasks(30);
 
-    expect(metadataRequests(app)).toHaveLength(2);
+    expect(metadataRequests(app)).toHaveLength(1);
+    expect(metadataRequests(app)[0].url).toContain(
+      "query_id=9496392173716084",
+    );
     expect(app.downloads).toHaveLength(1);
     expect(app.downloads[0].url).toBe(
       "https://cdn.example.test/api-reel-first.mp4",
     );
+    expect(app.alerts).toEqual([]);
+  });
+
+  it("downloads an exact XIG bootstrap Reel without a metadata request", async () => {
+    const item = {
+      pk: "embedded-reel-id",
+      code: "EmbeddedReel1",
+      media_type: 2,
+      taken_at: 1_703_000_201,
+      user: { username: "embedded_reel_owner" },
+      image_versions2: {
+        candidates: [
+          { url: "https://cdn.example.test/embedded-reel-poster.jpg" },
+        ],
+      },
+      video_versions: [
+        { url: "https://cdn.example.test/embedded-reel.mp4" },
+      ],
+    };
+    const app = await runtime({
+      html: reelHtml("IG_REELS", {
+        deeply: {
+          nested: {
+            xig_polaris_media: { if_not_gated_logged_out: item },
+          },
+        },
+      }),
+      url: "https://www.instagram.com/reel/EmbeddedReel1/",
+    });
+
+    click(app, ".IG_REELS");
+    await app.flushMicrotasks(30);
+
+    expect(metadataRequests(app)).toHaveLength(0);
+    expect(app.downloads).toHaveLength(1);
+    expect(app.downloads[0]).toMatchObject({
+      url: "https://cdn.example.test/embedded-reel.mp4",
+    });
     expect(app.alerts).toEqual([]);
   });
 
