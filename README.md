@@ -234,6 +234,12 @@ Instagram changes its DOM structure and private API responses often. If a
 button disappears, a dialog stays on "Loading Blob Media", or a download cannot
 find a URL, the resolver for that specific Instagram surface may need an update.
 
+### Stories advance before the download resolves
+
+A Story can move to the next slide before **Download** finishes resolving the
+current photo or video. When that happens, pause the Story, choose **Open in New
+Tab**, and then save the media manually from the opened tab.
+
 Useful checks:
 
 - Make sure you are logged in to Instagram. Some Media API paths redirect to
