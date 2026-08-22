@@ -37,16 +37,11 @@
 // @description:zh-TW  一鍵下載 Instagram 貼文中的照片、影片，還包含限時動態、Reels 與大頭貼。
 // @author             paytonison; based on SN-Koarashi (5026)
 // @match              https://*.instagram.com/*
-// @grant              GM_addStyle
-// @grant              GM_download
-// @grant              GM_getValue
-// @grant              GM_info
-// @grant              GM_notification
-// @grant              GM_openInTab
-// @grant              GM_registerMenuCommand
-// @grant              GM_setValue
-// @grant              GM_unregisterMenuCommand
-// @grant              GM_xmlhttpRequest
+// @grant              GM.addStyle
+// @grant              GM.getValue
+// @grant              GM.openInTab
+// @grant              GM.setValue
+// @grant              GM.xmlHttpRequest
 // @connect            cdn.jsdelivr.net
 // @connect            *.cdninstagram.com
 // @connect            *.fbcdn.net
@@ -54,21 +49,18 @@
 // @connect            raw.githubusercontent.com
 // @connect            scontent.cdninstagram.com
 // @connect            www.instagram.com
-// @require            https://cdn.jsdelivr.net/npm/mediabunny@1.34.5/dist/bundles/mediabunny.min.cjs#sha256-wUFR+x2bDvpqgMAVGy2CvGvULyjTGvGy4UUAm8rae5U=
 // @require            https://code.jquery.com/jquery-3.7.1.min.js#sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=
 // @supportURL         https://github.com/paytonison/insta-loader/
 // @icon               https://www.google.com/s2/favicons?domain=www.instagram.com&sz=32
-// @compatible         chrome >= 100
-// @compatible         edge >= 100
-// @compatible         firefox >= 100
 // @compatible         safari >= 15.4
 // @license            GPL-3.0-only
+// @inject-into        content
 // @run-at             document-start
 // @downloadURL        https://raw.githubusercontent.com/paytonison/insta-loader/main/insta-loader.user.js
 // @updateURL          https://raw.githubusercontent.com/paytonison/insta-loader/main/insta-loader.user.js
 // ==/UserScript==
 
-(() => {
+(async () => {
   var __defProp = Object.defineProperty;
   var __export = (target, all) => {
     for (var name in all)
@@ -88,18 +80,87 @@
   function isSafariUserAgent(userAgent) {
     return SAFARI_USER_AGENT_PATTERN.test(String(userAgent || ""));
   }
+  function createRequestAdapter(requestImpl) {
+    if (typeof requestImpl !== "function") return null;
+    return function userscriptsRequest(details = {}) {
+      let terminalCallbackFired = false;
+      const requestDetails = { ...details };
+      for (const name of ["onload", "onerror", "ontimeout", "onabort"]) {
+        const callback = details[name];
+        requestDetails[name] = (...args) => {
+          if (terminalCallbackFired) return;
+          terminalCallbackFired = true;
+          callback?.(...args);
+        };
+      }
+      const task = requestImpl(requestDetails);
+      if (typeof task?.then === "function") {
+        Promise.resolve(task).then(
+          (response) => {
+            if (!terminalCallbackFired) requestDetails.onload(response);
+          },
+          (error) => {
+            if (!terminalCallbackFired) requestDetails.onerror(error);
+          }
+        );
+      }
+      return {
+        abort() {
+          task?.abort?.();
+        }
+      };
+    };
+  }
+  async function createUserscriptsStorageBridge(gm, keys) {
+    if (typeof gm?.getValue !== "function" || typeof gm?.setValue !== "function") {
+      throw new Error(
+        "insta-loader requires the Userscripts extension GM.getValue and GM.setValue APIs in content-script context."
+      );
+    }
+    const values = /* @__PURE__ */ new Map();
+    await Promise.all(
+      [...new Set(keys)].map(async (key) => {
+        try {
+          const value = await gm.getValue(key);
+          if (value !== void 0) values.set(key, value);
+        } catch (error) {
+          console.error(`[insta-loader] Could not read setting ${key}.`, error);
+        }
+      })
+    );
+    return Object.freeze({
+      getValue(key, defaultValue) {
+        return values.has(key) ? values.get(key) : defaultValue;
+      },
+      setValue(key, value) {
+        values.set(key, value);
+        try {
+          return Promise.resolve(gm.setValue(key, value)).catch((error) => {
+            console.error(`[insta-loader] Could not save setting ${key}.`, error);
+          });
+        } catch (error) {
+          console.error(`[insta-loader] Could not save setting ${key}.`, error);
+          return Promise.resolve();
+        }
+      }
+    });
+  }
   function createUserscriptEnvironment(overrides = {}) {
     const root = overrides.globalObject || globalThis;
     const windowObject = overrides.window || root.window || root;
     const gm = overrides.gm || root.GM || {};
     const getValue = bindCallable(overrides.getValue, overrides) || bindCallable(root.GM_getValue, root) || bindCallable(gm.getValue, gm) || unavailable("storage.getValue");
     const setValue = bindCallable(overrides.setValue, overrides) || bindCallable(root.GM_setValue, root) || bindCallable(gm.setValue, gm) || unavailable("storage.setValue");
-    const request = bindCallable(overrides.request, overrides) || bindCallable(overrides.xmlHttpRequest, overrides) || bindCallable(root.GM_xmlhttpRequest, root) || bindCallable(gm.xmlHttpRequest, gm) || unavailable("request");
+    const requestImpl = bindCallable(overrides.request, overrides) || bindCallable(overrides.xmlHttpRequest, overrides) || bindCallable(root.GM_xmlhttpRequest, root) || bindCallable(gm.xmlHttpRequest, gm);
+    const request = createRequestAdapter(requestImpl) || unavailable("request");
     const downloadImpl = bindCallable(overrides.download, overrides) || bindCallable(root.GM_download, root) || bindCallable(gm.download, gm);
     const download = downloadImpl || unavailable("download");
-    const registerMenuCommand = bindCallable(overrides.registerMenuCommand, overrides) || bindCallable(root.GM_registerMenuCommand, root) || bindCallable(gm.registerMenuCommand, gm) || unavailable("menu.register");
-    const unregisterMenuCommand = bindCallable(overrides.unregisterMenuCommand, overrides) || bindCallable(root.GM_unregisterMenuCommand, root) || bindCallable(gm.unregisterMenuCommand, gm) || unavailable("menu.unregister");
-    const notify = bindCallable(overrides.notify, overrides) || bindCallable(overrides.notification, overrides) || bindCallable(root.GM_notification, root) || bindCallable(gm.notification, gm) || unavailable("notification");
+    const registerMenuCommandImpl = bindCallable(overrides.registerMenuCommand, overrides) || bindCallable(root.GM_registerMenuCommand, root) || bindCallable(gm.registerMenuCommand, gm);
+    const registerMenuCommand = registerMenuCommandImpl || unavailable("menu.register");
+    const unregisterMenuCommandImpl = bindCallable(overrides.unregisterMenuCommand, overrides) || bindCallable(root.GM_unregisterMenuCommand, root) || bindCallable(gm.unregisterMenuCommand, gm);
+    const unregisterMenuCommand = unregisterMenuCommandImpl || unavailable("menu.unregister");
+    const notifyImpl = bindCallable(overrides.notify, overrides) || bindCallable(overrides.notification, overrides) || bindCallable(root.GM_notification, root) || bindCallable(gm.notification, gm);
+    const notify = notifyImpl || unavailable("notification");
     const openInTab = bindCallable(overrides.openInTab, overrides) || bindCallable(root.GM_openInTab, root) || bindCallable(gm.openInTab, gm) || unavailable("tab.open");
     const addStyle = bindCallable(overrides.addStyle, overrides) || bindCallable(root.GM_addStyle, root) || bindCallable(gm.addStyle, gm) || unavailable("style.add");
     const setTimeoutImpl = bindCallable(overrides.setTimeout, overrides) || bindCallable(windowObject.setTimeout, windowObject) || unavailable("timer.setTimeout");
@@ -139,6 +200,10 @@
             return typeof windowObject[name] === "function";
           case "GM_download":
             return downloadImpl != null;
+          case "GM_registerMenuCommand":
+            return registerMenuCommandImpl != null && unregisterMenuCommandImpl != null;
+          case "GM_notification":
+            return notifyImpl != null;
           default:
             return typeof windowObject[name] === "function";
         }
@@ -850,13 +915,13 @@
     DISABLE_VIDEO_LOOPING: false,
     FALLBACK_TO_BLOB_FETCH_IF_MEDIA_API_THROTTLED: false,
     FORCE_FETCH_ALL_RESOURCES: true,
-    FORCE_RESOURCE_VIA_MEDIA: true,
+    FORCE_RESOURCE_VIA_MEDIA: false,
     HTML5_VIDEO_CONTROL: false,
     MAX_REEL_PLAYBACK_QUALITY: true,
     MODIFY_RESOURCE_EXIF: false,
     MODIFY_VIDEO_VOLUME: false,
     NEW_TAB_ALWAYS_FORCE_MEDIA_IN_POST: true,
-    PREFER_DASH_MANIFEST: true,
+    PREFER_DASH_MANIFEST: false,
     REDIRECT_CLICK_USER_STORY_PICTURE: false,
     RENAME_PUBLISH_DATE: true,
     SCROLL_BUTTON: false,
@@ -10543,6 +10608,12 @@
       font-size: 12px;
     }
 
+    .IG_POPUP_DIG select,
+    .IG_POPUP_DIG select option {
+      color: #fff;
+      -webkit-text-fill-color: #fff;
+    }
+
     .globalSettings {
       display: block;
       min-height: 46px;
@@ -12079,7 +12150,7 @@
         settingsController,
         hotkeyController,
         debugController,
-        menuController
+        ...(environment2.browser.supports("GM_registerMenuCommand") ? [menuController] : [])
       ],
       onError: (error, context) => logger("ApplicationCoordinator", context?.phase || "error", error)
     });
@@ -15436,6 +15507,7 @@
       }
     }
     function checkingScriptUpdate(interval) {
+      if (!environment2.browser.supports("GM_notification")) return;
       mountUpdateCheckService();
       updateCheckService.checkIfDue(
         interval,
@@ -15443,6 +15515,9 @@
       );
     }
     function callNotification() {
+      if (!environment2.browser.supports("GM_notification")) {
+        return Promise.resolve();
+      }
       mountUpdateCheckService();
       return updateCheckService.notifyIfUpdateAvailable();
     }
@@ -16114,14 +16189,24 @@
   }
 
   // src/index.js
-  var environment = createUserscriptEnvironment();
+  var userscriptsApi = typeof GM !== "undefined" ? GM : globalThis.GM;
+  var userscriptsStorage = await createUserscriptsStorageBridge(userscriptsApi, [
+    ...USER_SETTING_KEYS,
+    ...Object.values(PREFERENCE_STORAGE_KEYS),
+    VIDEO_VOLUME_STORAGE_KEY
+  ]);
+  var environment = createUserscriptEnvironment({
+    gm: userscriptsApi,
+    getValue: userscriptsStorage.getValue,
+    setValue: userscriptsStorage.setValue
+  });
   var settingsStore = new SettingsStore(environment);
   var preferencesStore = new PreferencesStore(environment, {
     defaultLanguage: environment.window.navigator.language || environment.window.navigator.userLanguage,
     now: environment.now
   });
   var preferences = preferencesStore.load();
-  startLegacyUserscript(jQuery, Mediabunny, {
+  startLegacyUserscript(jQuery, null, {
     environment,
     preferences,
     preferencesStore,
@@ -16135,4 +16220,6 @@
     jsonRequest: (options) => requestJson(environment, options),
     textRequest: (options) => requestText(environment, options)
   });
-})();
+})().catch((error) => {
+  console.error("[insta-loader] Failed to start.", error);
+});
