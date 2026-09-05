@@ -1,0 +1,13 @@
+{
+  "name": "insta-loader",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A clean-room Instagram media downloader userscript.",
+  "scripts": {
+    "check": "node --check insta-loader.user.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
