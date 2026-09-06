@@ -237,47 +237,410 @@ test('image sniffing recognizes genuine JPEG and PNG bytes and rejects HTML resp
   assert.throws(() => core.imageType(new ArrayBuffer(0)),/unsupported image|error page/i);
 });
 
-test('startup mounts exactly three actions and repeat injection adds no host or listeners', () => {
+// Exercise the shipped script against a small DOM, including its actual page-context
+// reader. Transport intentionally fails after recording the selected file URL.
+function toolbarPage(href = 'https://www.instagram.com/') {
   const vm = require('node:vm');
-  const source = fs.readFileSync(require.resolve('../insta-loader.user.js'),'utf8');
-  const hosts = new Map();
-  const listeners = [];
-  const created = [];
-  class StartupElement {
-    constructor(tagName) { this.tagName = tagName.toUpperCase(); this.style = {}; this.dataset = {}; this.isConnected = true; }
-    attachShadow() {
-      const shadow = {
-        innerHTML: '',
-        querySelectorAll(selector) {
-          assert.equal(selector,'button');
-          return [...this.innerHTML.matchAll(/<button\b[^>]*data-action="([^"]+)"/g)].map(match => ({dataset:{action:match[1]}}));
-        },
-        querySelector(selector) { assert.equal(selector,'.status');return {textContent:'',dataset:{}}; },
-        addEventListener(type) { listeners.push(`shadow:${type}`); },
-      };
-      this.shadowRoot = shadow; return shadow;
+  const source = fs.readFileSync(require.resolve('../insta-loader.user.js'), 'utf8');
+  const events = [];
+  const frames = new Map();
+  const observers = [];
+  const requests = [];
+  const intervals = new Map();
+  let fullMediaScans = 0;
+  let sequence = 0;
+  let sandbox;
+  class Target {
+    constructor() { this.listeners = new Map(); }
+    addEventListener(type, callback, options = {}) {
+      const values = this.listeners.get(type) || [];
+      values.push(callback); this.listeners.set(type, values);
+      events.push({ target: this, type, callback });
+      options.signal?.addEventListener('abort', () => this.removeEventListener(type, callback), { once: true });
+    }
+    removeEventListener(type, callback) {
+      this.listeners.set(type, (this.listeners.get(type) || []).filter(value => value !== callback));
+    }
+    async dispatch(type, target = this, extra = {}) {
+      const event = { type, target, preventDefault() {}, stopPropagation() { this.stopped = true; },
+        composedPath: () => { const path = []; for (let node = target; node; node = node.parentElement || node.host) path.push(node); return path; }, ...extra };
+      for (let node = this; node; node = event.stopped ? null : node.parentElement || node.host) {
+        for (const callback of node.listeners?.get(type) || []) await callback(event);
+      }
     }
   }
-  const document = {
-    documentElement: {append(element) { hosts.set(element.id,element); }},
-    getElementById(id) { return hosts.get(id) || null; },
-    createElement(tagName) { const element = new StartupElement(tagName);created.push(element);return element; },
-    addEventListener(type) { listeners.push(`document:${type}`); },
+  function selectors(selector) { return selector.split(',').map(value => value.trim()); }
+  class Element extends Target {
+    constructor(tag) {
+      super(); this.tagName = tag.toUpperCase(); this.nodeType = 1; this.children = []; this.parentElement = null;
+      this.attributes = new Map(); this.dataset = {}; this.textContent = ''; this.hidden = false;
+      this.style = { setProperty(name, value) { this[name] = value; }, removeProperty(name) { delete this[name]; } };
+      this.classList = { contains: value => this.className.split(/\s+/).includes(value),
+        add: value => { this.className = `${this.className} ${value}`.trim(); },
+        remove: value => { this.className = this.className.split(/\s+/).filter(item => item !== value).join(' '); } };
+    }
+    get id() { return this.getAttribute('id') || ''; }
+    set id(value) { this.setAttribute('id', value); }
+    get className() { return this.getAttribute('class') || ''; }
+    set className(value) { this.setAttribute('class', value); }
+    get isConnected() { return this === document.documentElement || Boolean((this.parentElement || this.host)?.isConnected); }
+    get parentNode() { return this.parentElement; }
+    get childNodes() { return this.children; }
+    get firstChild() { return this.children[0] || null; }
+    get content() {
+      assert.equal(this.tagName, 'TEMPLATE');
+      return { cloneNode: () => { const fragment = this.cloneNode(true); fragment.nodeType = 11; return fragment; } };
+    }
+    cloneNode(deep) {
+      const clone = new Element(this.tagName);
+      for (const [name, value] of this.attributes) clone.setAttribute(name, value);
+      if (deep) clone.append(...this.children.map(child => child.cloneNode(true)));
+      return clone;
+    }
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+      if (name.startsWith('data-')) this.dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(value);
+    }
+    getAttribute(name) { return this.attributes.get(name) ?? null; }
+    hasAttribute(name) { return this.attributes.has(name); }
+    removeAttribute(name) {
+      this.attributes.delete(name);
+      if (name.startsWith('data-')) delete this.dataset[name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())];
+    }
+    matches(selector) {
+      return selectors(selector).some(value => {
+        if (value === '*') return true;
+        const tag = value.match(/^[a-z][\w-]*/i)?.[0];
+        if (tag && tag.toUpperCase() !== this.tagName) return false;
+        for (const [, id] of value.matchAll(/#([\w-]+)/g)) if (this.id !== id) return false;
+        for (const [, cls] of value.matchAll(/\.([\w-]+)/g)) if (!this.classList.contains(cls)) return false;
+        for (const [, name, expected] of value.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)) {
+          const actual = name === 'href' ? this.href : this.getAttribute(name);
+          if (actual == null || (expected !== undefined && actual !== expected)) return false;
+        }
+        return true;
+      });
+    }
+    closest(selector) { for (let node = this; node; node = node.parentElement) if (node.matches(selector)) return node; return null; }
+    contains(element) { return element === this || this.children.some(child => child.contains(element)); }
+    querySelectorAll(selector) {
+      if (this === document.documentElement && selector === 'video, img') fullMediaScans += 1;
+      const result = [];
+      for (const child of this.children) {
+        if (child.matches(selector)) result.push(child);
+        result.push(...child.querySelectorAll(selector));
+      }
+      return result;
+    }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+    append(...elements) {
+      for (const element of elements) {
+        if (element.nodeType === 11) { this.append(...element.children); continue; }
+        element.remove(); element.parentElement = this; this.children.push(element);
+        if (element.tagName === 'SCRIPT' && element.type !== 'application/json' && element.textContent) {
+          vm.runInContext(element.textContent, sandbox);
+        }
+      }
+    }
+    appendChild(element) { this.append(element); return element; }
+    replaceChildren(...elements) { for (const child of [...this.children]) child.remove(); this.append(...elements); }
+    remove() {
+      if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(value => value !== this);
+      this.parentElement = null;
+    }
+    attachShadow() { const shadow = new Element('shadow-root'); shadow.host = this; this.shadowRoot = shadow; return shadow; }
+    getBoundingClientRect() {
+      const rect = this.rect || { left: 0, top: 0, width: 340, height: 60 };
+      return { ...rect, x: rect.left, y: rect.top, right: rect.left + rect.width, bottom: rect.top + rect.height };
+    }
+    getClientRects() { return this.isConnected && !this.hidden ? [this.getBoundingClientRect()] : []; }
+    set innerHTML(html) {
+      this.replaceChildren();
+      const stack = [this];
+      for (const match of html.matchAll(/<([^>]+)>/g)) {
+        const token = match[1];
+        if (token.startsWith('/')) { if (stack.length > 1) stack.pop(); continue; }
+        if (token.startsWith('!')) continue;
+        const tag = token.match(/^[^\s/]+/)?.[0]; if (!tag) continue;
+        const node = new Element(tag);
+        for (const [, key, value] of token.matchAll(/([\w-]+)="([^"]*)"/g)) node.setAttribute(key, value);
+        stack.at(-1).append(node);
+        if (!/^(img|input|br|hr|meta|link)$/i.test(tag) && !token.endsWith('/')) stack.push(node);
+      }
+    }
+  }
+  const document = new Target();
+  document.documentElement = new Element('html');
+  document.body = new Element('body'); document.documentElement.append(document.body);
+  document.createElement = tag => new Element(tag);
+  document.querySelectorAll = selector => document.documentElement.querySelectorAll(selector);
+  document.querySelector = selector => document.querySelectorAll(selector)[0] || null;
+  document.getElementById = id => document.querySelectorAll('[id]').find(element => element.id === id) || null;
+  const window = new Target();
+  sandbox = { document, location: { hostname: 'www.instagram.com', href }, AbortController, TextEncoder, URL, console,
+    innerWidth: 1400, innerHeight: 1000,
+    getComputedStyle: element => ({ display: element.hidden ? 'none' : 'block', visibility: 'visible', opacity: '1', overflow: 'visible', overflowX: 'visible', overflowY: 'visible', ...element.computedStyle }),
+    addEventListener: window.addEventListener.bind(window), removeEventListener: window.removeEventListener.bind(window),
+    requestAnimationFrame: callback => { const id = ++sequence; frames.set(id, callback); return id; },
+    cancelAnimationFrame: id => frames.delete(id),
+    setTimeout: () => ++sequence, clearTimeout() {},
+    setInterval: callback => { const id = ++sequence; intervals.set(id, callback); return id; }, clearInterval: id => intervals.delete(id),
+    MutationObserver: class { constructor(callback) { this.callback = callback; observers.push(this); } observe() {} disconnect() {} },
+    ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
+    GM: { xmlHttpRequest(options) { requests.push(options.url); options.onerror({ error: 'intentional transport stop' }); return { abort() {} }; } },
   };
-  const sandbox = {document,location:{hostname:'www.instagram.com',href:'https://www.instagram.com/'},AbortController,console,addEventListener(type) { listeners.push(`window:${type}`); }};
   sandbox.window = sandbox; sandbox.top = sandbox; sandbox.self = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(source,sandbox,{filename:'insta-loader.user.js'});
-  assert.equal(hosts.size,1);
-  const host = hosts.get('insta-loader-controls');
-  assert.ok(host?.shadowRoot);
-  assert.deepEqual(host.shadowRoot.querySelectorAll('button').map(button => button.dataset.action),['open','all','download']);
-  const listenerSnapshot = [...listeners];
-  const creationCount = created.length;
-  vm.runInContext(source,sandbox,{filename:'insta-loader.user.js'});
-  assert.equal(hosts.size,1);assert.equal(hosts.get('insta-loader-controls'),host);
-  assert.equal(created.length,creationCount);assert.deepEqual(listeners,listenerSnapshot);
-  assert.equal(listeners.filter(value=>value==='shadow:click').length,1);
+  function flush() {
+    let remaining = 20;
+    while (frames.size && remaining-- > 0) {
+      const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(0));
+    }
+    assert.equal(frames.size, 0, 'toolbar reconciliation must settle');
+  }
+  function notify(records = [{ type: 'childList', target: document.body, addedNodes: document.body.children, removedNodes: [] }]) {
+    observers.forEach(observer => observer.callback(records)); flush();
+  }
+  function addMedia(code, { tag = 'img', id = code, left = 100, top = 100, width = 360, height = 400, parent = document.body } = {}) {
+    const article = new Element('article'); parent.append(article);
+    const link = new Element('a'); link.href = `https://www.instagram.com/p/${code}/`; article.append(link);
+    const wrapper = new Element('div'); article.append(wrapper);
+    const media = new Element(tag); media.rect = { left, top, width, height }; wrapper.append(media);
+    media.src = `${cdn}/${id}.${tag === 'video' ? 'mp4' : 'jpg'}`; media.currentSrc = media.src;
+    media.naturalWidth = media.videoWidth = width; media.naturalHeight = media.videoHeight = height;
+    media.duration = tag === 'video' ? 5 : NaN;
+    const item = { id, code, isVideo: tag === 'video', dimensions: { width, height }, src: media.src,
+      ...(tag === 'video' ? { videoUrl: media.src, hasAudio: true, videoResources: [{ src: media.src, configWidth: width, configHeight: height }] }
+        : { displayResources: [{ src: media.src, configWidth: width, configHeight: height }] }) };
+    Object.defineProperty(media, '__reactFiber$test', { value: { memoizedProps: { media: item }, return: { memoizedProps: { post: item }, return: null } } });
+    return { media, article, wrapper, item };
+  }
+  const inject = () => { vm.runInContext(source, sandbox, { filename: 'insta-loader.user.js' }); flush(); };
+  const host = () => document.getElementById('insta-loader-controls');
+  const panels = () => host()?.shadowRoot.querySelectorAll('.media-controls') || [];
+  const click = async (panel, action = 'download') => { const button = panel.querySelector(`[data-action="${action}"]`); assert.ok(button); await button.dispatch('click'); flush(); };
+  return { document, window, sandbox, events, requests, intervals, addMedia, inject, host, panels, click, notify, flush,
+    get fullMediaScans() { return fullMediaScans; } };
+}
+
+test('media toolbars bind clicks to their own post, even when another visible post is larger', async () => {
+  const page = toolbarPage();
+  page.addMedia('SMALL', { left: 80, top: 100, width: 320, height: 320 });
+  page.addMedia('LARGE', { left: 600, top: 100, width: 550, height: 700 });
+  page.inject();
+  assert.equal(page.panels().length, 2);
+  for (const panel of page.panels()) {
+    assert.deepEqual(panel.querySelectorAll('button').map(button => button.dataset.action), ['open', 'all', 'download']);
+    await page.click(panel);
+  }
+  assert.equal(page.requests.length, 2);
+  assert.deepEqual([...page.requests].sort(), [`${cdn}/LARGE.jpg`, `${cdn}/SMALL.jpg`]);
+});
+
+test('a feed video linked to its Reel inside an article gets a toolbar for that media', async () => {
+  const page = toolbarPage();
+  const { media, article, wrapper } = page.addMedia('FEED_REEL', { id: '111', tag: 'video' });
+  const audio = page.document.createElement('a');
+  audio.href = 'https://www.instagram.com/reels/audio/39263539809911949/';
+  article.append(audio);
+  const mediaLink = page.document.createElement('a');
+  mediaLink.href = 'https://www.instagram.com/reels/FEED_REEL/';
+  wrapper.append(mediaLink); mediaLink.append(media);
+  page.inject();
+  assert.equal(page.panels().length, 1);
+  await page.click(page.panels()[0]);
+  assert.deepEqual(page.requests, [`${cdn}/111.mp4`]);
+});
+
+test('a video portal reads its nearby DOM post data once and rejects a different parent post', async t => {
+  for (const parentCode of ['POST', 'OTHER']) await t.test(parentCode, async () => {
+    const page = toolbarPage();
+    const { media, wrapper, item } = page.addMedia('POST', { id: '111', tag: 'video' });
+    let globalReads = 0;
+    const playbackFiber = { get memoizedProps() { globalReads += 1; return { setGlobalVideoPortsManager() {} }; }, return: null };
+    const mediaFiber = media.__reactFiber$test;
+    mediaFiber.memoizedProps = { media: { id: '111' } }; mediaFiber.return = playbackFiber;
+    let inner = media;
+    for (let level = 0; level < 6; level += 1) {
+      const parent = page.document.createElement('div');
+      Object.defineProperty(parent, '__reactFiber$test', { value: playbackFiber });
+      wrapper.append(parent); parent.append(inner); inner = parent;
+    }
+    Object.defineProperty(wrapper, '__reactFiber$test', { value: { memoizedProps: { post: { ...item, code: parentCode } }, return: playbackFiber } });
+    Object.defineProperty(page.document.body, '__reactFiber$outside', { get() { throw new Error('Capture left the article.'); } });
+    page.inject();
+    assert.equal(page.panels().length, 1);
+    await page.click(page.panels()[0]);
+    assert.equal(globalReads, 1, 'shared playback fibers must not be rewalked for each DOM ancestor');
+    assert.deepEqual(page.requests, parentCode === 'POST' ? [`${cdn}/111.mp4`] : []);
+    if (parentCode === 'OTHER') assert.match(page.panels()[0].querySelector('.status').textContent, /exact post or Story/);
+  });
+});
+
+test('repeat startup and reconciliation do not duplicate media controls or listeners; removed media loses controls', () => {
+  const page = toolbarPage();
+  const first = page.addMedia('FIRST');
+  page.inject();
+  assert.equal(page.panels().length, 1);
+  const host = page.host();
+  const snapshot = [...page.events];
+  page.inject();
+  assert.equal(page.host(), host);
+  assert.deepEqual(page.events, snapshot);
+  page.notify(); page.notify();
+  assert.equal(page.panels().length, 1);
+  const second = page.addMedia('SECOND', { left: 600 });
+  page.notify([{ type: 'childList', target: page.document.body, addedNodes: [second.article], removedNodes: [] }]);
+  assert.equal(page.panels().length, 2);
+  first.article.remove();
+  page.notify([{ type: 'childList', target: page.document.body, addedNodes: [], removedNodes: [first.article] }]);
+  assert.equal(page.panels().length, 1);
+  second.article.remove();
+  page.notify([{ type: 'childList', target: page.document.body, addedNodes: [], removedNodes: [second.article] }]);
+  assert.equal(page.panels().length, 0);
+});
+
+test('a stale toolbar cannot silently select replacement media before reconciliation', async () => {
+  const page = toolbarPage();
+  const { media } = page.addMedia('FIRST');
+  page.inject();
+  const panel = page.panels()[0];
+  media.currentSrc = media.src = `${cdn}/REPLACEMENT.jpg`;
+  await page.click(panel);
+  assert.deepEqual(page.requests, []);
+});
+
+test('every toolbar action rejects unowned media despite an exact post record elsewhere on the page', async t => {
+  for (const action of ['open', 'download', 'all']) await t.test(action, async () => {
+    const page = toolbarPage('https://www.instagram.com/p/POST/');
+    page.addMedia('POST', { id: '111', left: 100, width: 400, height: 400 });
+    const unrelated = page.addMedia('UNRELATED', { id: '222', left: 600, width: 500, height: 600 });
+    unrelated.article.querySelector('a').remove();
+    const metadata = page.document.createElement('script');
+    metadata.type = 'application/json'; metadata.setAttribute('type', 'application/json');
+    metadata.textContent = JSON.stringify(image('111', 'POST', 400));
+    page.document.body.append(metadata);
+    page.inject();
+    const panel = page.panels()[0];
+    assert.match(panel.style.cssText, /left:600px/, 'exercise the toolbar attached to the larger unowned image');
+    await page.click(panel, action);
+    assert.deepEqual(page.requests, [], 'a matching page record must not authorize a different displayed element');
+    assert.match(panel.querySelector('.status').textContent, /could not be identified/);
+  });
+});
+
+test('every action still resolves blob Reel playback through its component item ID', async t => {
+  for (const action of ['open', 'download', 'all']) await t.test(action, async () => {
+    const page = toolbarPage('https://www.instagram.com/reel/POST/');
+    const { media, article } = page.addMedia('POST', { id: '111', tag: 'video' });
+    article.querySelector('a').remove();
+    media.src = media.currentSrc = 'blob:https://www.instagram.com/current-playback';
+    page.inject();
+    assert.equal(page.panels().length, 1);
+    await page.click(page.panels()[0], action);
+    assert.deepEqual(page.requests, [`${cdn}/111.mp4`]);
+    assert.match(page.panels()[0].querySelector('.status').textContent, /intentional transport stop/);
+  });
+});
+
+test('Story toolbar belongs to the central item and safely rebinds a reused media element', async () => {
+  const page = toolbarPage('https://www.instagram.com/stories/person/123/');
+  page.addMedia('LEFT', { id: '111', left: 20, width: 320, height: 400 });
+  const current = page.addMedia('STORY', { id: '123', left: 500, width: 400, height: 700 });
+  page.addMedia('RIGHT', { id: '999', left: 1050, width: 320, height: 400 });
+  page.inject();
+  assert.equal(page.panels().length, 1);
+  const panel = page.panels()[0];
+  assert.match(panel.style.cssText, /left:500px/);
+  await page.click(panel);
+  assert.deepEqual(page.requests, [`${cdn}/123.jpg`]);
+  page.sandbox.location.href = 'https://www.instagram.com/stories/person/124/';
+  current.media.currentSrc = current.media.src = `${cdn}/124.jpg`;
+  current.item.id = '124'; current.item.src = current.media.src;
+  current.item.displayResources[0].src = current.media.src;
+  await page.click(panel);
+  assert.equal(page.requests.length, 1, 'an unreconciled toolbar must not choose a new Story');
+  assert.equal(page.panels().length, 1);
+  await page.click(page.panels()[0]);
+  assert.deepEqual(page.requests, [`${cdn}/123.jpg`, `${cdn}/124.jpg`]);
+});
+
+test('Story toolbar rejects mismatched media metadata for current and all-item actions', async () => {
+  const page = toolbarPage('https://www.instagram.com/stories/person/123/');
+  page.addMedia('WRONG', { id: '999', left: 500, width: 400, height: 700 });
+  page.inject();
+  assert.equal(page.panels().length, 1);
+  await page.click(page.panels()[0]);
+  await page.click(page.panels()[0], 'all');
+  assert.deepEqual(page.requests, []);
+  assert.match(page.panels()[0].querySelector('.status').textContent, /exact post or Story/);
+});
+
+test('an overlapping video and poster receive one toolbar that selects the video', async () => {
+  const page = toolbarPage();
+  page.addMedia('POST', { id: 'poster', width: 400, height: 500 });
+  page.addMedia('POST', { id: 'video', tag: 'video', width: 400, height: 500 });
+  page.inject();
+  assert.equal(page.panels().length, 1);
+  await page.click(page.panels()[0]);
+  assert.deepEqual(page.requests, [`${cdn}/video.mp4`]);
+});
+
+test('scrolling repositions and hides attached controls without rediscovering all media', async () => {
+  const page = toolbarPage();
+  const { media } = page.addMedia('POST');
+  page.inject();
+  const scans = page.fullMediaScans;
+  media.rect.top = 250;
+  await page.window.dispatch('scroll'); page.flush();
+  assert.match(page.panels()[0].style.cssText, /top:250px/);
+  media.rect.top = 1100;
+  await page.window.dispatch('scroll'); page.flush();
+  assert.equal(page.panels().length, 0);
+  media.rect.top = 100;
+  await page.window.dispatch('scroll'); page.flush();
+  assert.equal(page.panels().length, 1);
+  assert.equal(page.fullMediaScans, scans);
+});
+
+test('profile tiles and hidden media do not receive download controls', () => {
+  const page = toolbarPage();
+  const tile = page.addMedia('TILE');
+  const tileLink = tile.article.querySelector('a');
+  tileLink.append(tile.media); page.document.body.append(tileLink); tile.article.remove();
+  const wrappedTile = page.addMedia('WRAPPED_TILE');
+  const outerLink = page.document.createElement('a');
+  outerLink.href = 'https://www.instagram.com/p/WRAPPED_TILE/';
+  page.document.body.append(outerLink); outerLink.append(wrappedTile.article);
+  const account = page.addMedia('ACCOUNT');
+  const accountLink = page.document.createElement('a');
+  accountLink.href = 'https://www.instagram.com/someone/';
+  account.wrapper.append(accountLink); accountLink.append(account.media);
+  const hidden = page.addMedia('HIDDEN');
+  hidden.wrapper.setAttribute('aria-hidden', 'true');
+  page.inject();
+  assert.ok(page.host());
+  assert.equal(page.panels().length, 0);
+});
+
+test('navigation cancels an outstanding request and clears the previous media action', async () => {
+  const page = toolbarPage('https://www.instagram.com/p/POST/');
+  page.addMedia('POST');
+  let aborted = 0;
+  page.sandbox.GM.xmlHttpRequest = options => {
+    page.requests.push(options.url);
+    return { abort() { aborted += 1; } };
+  };
+  page.inject();
+  const pending = page.click(page.panels()[0]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(page.requests.length, 1);
+  page.sandbox.location.href = 'https://www.instagram.com/p/OTHER/';
+  page.notify();
+  await pending;
+  assert.equal(aborted, 1);
+  assert.equal(page.intervals.size, 0);
+  assert.equal(page.panels().length, 0);
 });
 
 

@@ -259,62 +259,69 @@
   const objectURLs = new Map();
   const lifetime = new AbortController();
 
-  function visibleArea(element) {
+  function visibleRect(element) {
     let r = element.getBoundingClientRect();
-    if (r.width < 64 || r.height < 64 || element.closest('[aria-hidden="true"]')) return 0;
+    if (r.width < 64 || r.height < 64 || element.closest('[aria-hidden="true"]')) return null;
     let left = Math.max(0, r.left), top = Math.max(0, r.top);
     let right = Math.min(innerWidth, r.right), bottom = Math.min(innerHeight, r.bottom);
     for (let p = element; p && p !== document.documentElement; p = p.parentElement) {
       const style = getComputedStyle(p);
-      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return 0;
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return null;
       if (p !== element && /hidden|clip|scroll|auto/.test(style.overflow + style.overflowX + style.overflowY)) {
         r = p.getBoundingClientRect();
         if (/hidden|clip|scroll|auto/.test(style.overflowX)) { left = Math.max(left, r.left); right = Math.min(right, r.right); }
         if (/hidden|clip|scroll|auto/.test(style.overflowY)) { top = Math.max(top, r.top); bottom = Math.min(bottom, r.bottom); }
       }
     }
-    return Math.max(0, right - left) * Math.max(0, bottom - top);
+    const width = Math.max(0, right - left), height = Math.max(0, bottom - top);
+    return width && height ? { left, top, right, bottom, width, height } : null;
   }
 
   function fingerprint(element) {
     return [element.currentSrc || element.src || '', element.poster || '', element.srcset || ''].join('|');
   }
 
-  function postRoot(element, route) {
+  function postRoot(element) {
     for (let root = element.parentElement; root && root !== document.body; root = root.parentElement) {
       const links = [...root.querySelectorAll('a[href]')].map(a => parseRoute(a.href)).filter(r => r.kind === 'post');
       const keys = new Set(links.map(r => r.key));
-      if (links.length && keys.size === 1 && (route.kind !== 'post' || keys.has(route.key))) return { root, route: links[0] };
+      if (links.length && keys.size === 1) return { root, route: links[0] };
       if (root.matches('main, [role="main"]') || keys.size > 1) break;
     }
     return null;
   }
 
-  function context() {
-    const route = parseRoute(location.href);
-    const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(d => visibleArea(d) > 0);
-    const scope = dialogs.at(-1) || document;
-    const elements = [...scope.querySelectorAll('video, img')]
-      .filter(e => !e.closest(`#${HOST_ID}`))
-      .map(element => ({ element, area: visibleArea(element) }))
-      .filter(e => e.area > 20000).sort((a, b) => b.area - a.area || (a.element.tagName === 'VIDEO' ? -1 : 1));
-    for (const { element } of elements) {
-      // On browse screens a tile is a link to a post, not the open post itself.
-      if (element.closest('a[href]') && route.kind === 'browse') continue;
-      const owned = route.kind === 'story' && route.token ? { root: element.parentElement, route }
-        : postRoot(element, route) || (route.kind === 'post' ? { root: element.parentElement, route } : null);
-      if (!owned) continue;
-      const actualRoute = route.kind === 'post' ? route : owned.route;
-      const width = element.videoWidth || element.naturalWidth || 0;
-      const height = element.videoHeight || element.naturalHeight || 0;
-      return {
-        ...owned, route: actualRoute, element, width, height,
+  function mediaContexts(elements, route = parseRoute(location.href)) {
+    const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(d => visibleRect(d));
+    const scope = dialogs.at(-1);
+    const candidates = [...elements]
+      .filter(element => element.isConnected && (!scope || scope.contains(element)))
+      .map(element => ({ element, rect: visibleRect(element) }))
+      .filter(({ rect }) => rect && rect.width >= 220 && rect.height >= 100)
+      .sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height
+        || Number(b.element.tagName === 'VIDEO') - Number(a.element.tagName === 'VIDEO'));
+    const contexts = new Map();
+    for (const { element, rect } of candidates) {
+      // Feed media can link to its Reel inside the article. A linked tile outside
+      // an article, or a link wrapping the whole article, remains navigation.
+      const link = element.closest('a[href]');
+      if (link && route.kind === 'browse'
+        && (!element.closest('article')?.contains(link) || parseRoute(link.href).kind !== 'post')) continue;
+      if (route.kind === 'story' && (!route.token || rect.left > innerWidth / 2 || rect.right < innerWidth / 2)) continue;
+      const owned = route.kind === 'story' ? { root: element.parentElement, route }
+        : postRoot(element) || (route.kind === 'post' ? { root: element.parentElement, route } : null);
+      if (!owned || (route.kind === 'post' && owned.route.key !== route.key) || contexts.has(owned.route.key)) continue;
+      const actualRoute = owned.route.key === route.key ? route : owned.route;
+      contexts.set(actualRoute.key, {
+        ...owned, route: actualRoute, element, rect,
+        width: element.videoWidth || element.naturalWidth || 0,
+        height: element.videoHeight || element.naturalHeight || 0,
         fingerprint: fingerprint(element), page: location.href,
         kind: element.tagName === 'VIDEO' ? 'video' : 'image',
         duration: Number.isFinite(element.duration) ? element.duration : null,
-      };
+      });
     }
-    throw new Error('Open a post, Reel, or Story and bring its media into view first.');
+    return [...contexts.values()];
   }
 
   function readRecords(doc, route) {
@@ -363,9 +370,6 @@
       const element = [...document.querySelectorAll('[data-insta-loader-read]')]
         .find(node => node.getAttribute('data-insta-loader-read') === requestId);
       if (!element) { fail('The selected media is no longer available.'); return; }
-      const fiberKey = Object.getOwnPropertyNames(element).find(key => key.startsWith('__reactFiber$'));
-      let fiber = fiberKey ? element[fiberKey] : null;
-      if (!fiber) { fail('Instagram has not exposed the selected media data yet.'); return; }
       const own = (node, key) => Object.prototype.hasOwnProperty.call(node, key);
       const idString = value => typeof value === 'string' && value ? value
         : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : null;
@@ -421,18 +425,30 @@
       const itemIds = [];
       const seenNodes = new WeakSet();
       const seenIds = new Set();
-      for (let depth = 0; fiber && depth < 60; depth += 1, fiber = fiber.return) {
-        const props = fiber.memoizedProps;
-        if (!props || typeof props !== 'object') continue;
-        for (const key of ['post', 'media', 'story', 'storyItem']) {
-          if (!own(props, key)) continue;
-          const node = props[key];
-          if (!node || typeof node !== 'object' || Array.isArray(node)) continue;
-          const id = baseId(own(node, 'id') ? node.id : null) || baseId(own(node, 'pk') ? node.pk : null);
-          if (id && !seenIds.has(id)) { seenIds.add(id); itemIds.push(id); }
-          if (matches(node) && !seenNodes.has(node)) { seenNodes.add(node); nodes.push(copyNode(node, true)); }
+      const seenFibers = new WeakSet();
+      let hasFiber = false;
+      // Feed video portals can have a global playback fiber while their nearby
+      // DOM container still belongs to the post. Stay within that media article.
+      for (let source = element, level = 0; source && level < 12; source = source.parentElement, level += 1) {
+        if (source.tagName === 'BODY' || source.tagName === 'HTML') break;
+        const fiberKey = Object.getOwnPropertyNames(source).find(key => key.startsWith('__reactFiber$'));
+        let fiber = fiberKey ? source[fiberKey] : null;
+        for (let depth = 0; fiber && depth < 60 && !seenFibers.has(fiber); depth += 1, fiber = fiber.return) {
+          seenFibers.add(fiber); hasFiber = true;
+          const props = fiber.memoizedProps;
+          if (!props || typeof props !== 'object') continue;
+          for (const key of ['post', 'media', 'story', 'storyItem']) {
+            if (!own(props, key)) continue;
+            const node = props[key];
+            if (!node || typeof node !== 'object' || Array.isArray(node)) continue;
+            const id = baseId(own(node, 'id') ? node.id : null) || baseId(own(node, 'pk') ? node.pk : null);
+            if (id && !seenIds.has(id)) { seenIds.add(id); itemIds.push(id); }
+            if (matches(node) && !seenNodes.has(node)) { seenNodes.add(node); nodes.push(copyNode(node, true)); }
+          }
         }
+        if (nodes.length || source.tagName === 'ARTICLE') break;
       }
+      if (!hasFiber) { fail('Instagram has not exposed the selected media data yet.'); return; }
       publish(nodes.length ? { nodes, itemIds } : { nodes: [], itemIds, error: 'The displayed data does not identify this exact post or Story.' });
     } catch {
       fail('The selected media metadata could not be read. Let it finish loading and try again.');
@@ -480,13 +496,12 @@
     const matches = record.items.map((item, index) => ({ item, index })).filter(({ item }) =>
       item.kind === ctx.kind && [...item.variants.map(v => v.url), ...item.posters].some(url => displayed.includes(mediaKey(url))));
     if (matches.length === 1) return matches[0].index;
-    if (record.count === 1 && record.items.length === 1 && record.items[0].kind === ctx.kind) return 0;
-    throw new Error('The current carousel item could not be identified. Open the item’s permalink or let its image finish loading.');
+    throw new Error('This media item could not be identified. Let it finish loading and try again.');
   }
 
   function assertCurrent(ctx, signal, checkItem = true) {
     if (signal.aborted || location.href !== ctx.page || !ctx.element.isConnected
-      || (checkItem && fingerprint(ctx.element) !== ctx.fingerprint)) {
+      || (checkItem && (fingerprint(ctx.element) !== ctx.fingerprint || !visibleRect(ctx.element)))) {
       throw new Error('The selected media changed. Click the action again for the new item.');
     }
   }
@@ -571,69 +586,192 @@
   }
 
   let jobController = null;
+  let activeContext = null;
   function mount() {
     if (document.getElementById(HOST_ID)) return;
     const host = document.createElement('div'); host.id = HOST_ID;
-    host.style.cssText = 'all:initial!important;position:fixed!important;bottom:76px!important;right:16px!important;z-index:2147483647!important;';
+    host.style.cssText = 'all:initial!important;position:fixed!important;inset:0!important;pointer-events:none!important;z-index:2147483647!important;';
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `<style>
-      :host{color-scheme:light dark}*{box-sizing:border-box}.panel{font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;background:#18181b;border:1px solid #555;border-radius:14px;box-shadow:0 5px 22px #0005;padding:6px;max-width:calc(100vw - 32px)}
-      .buttons{display:flex;gap:3px}button{font:inherit;display:flex;align-items:center;gap:6px;cursor:pointer;color:#fff;background:transparent;border:0;border-radius:9px;padding:10px;white-space:nowrap}button:hover{background:#39393f}button:focus-visible{outline:2px solid #c4b5fd;outline-offset:-2px}button:disabled{opacity:.5;cursor:wait}button:last-child{background:#6d28d9}button:last-child:hover{background:#7c3aed}svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.status{display:none;max-width:340px;margin:6px 5px 4px;line-height:1.45;overflow-wrap:anywhere}.status:not(:empty){display:block}.status[data-error=true]{color:#fca5a5}@media(max-width:420px){button{padding:9px 7px;font-size:12px}}
-    </style><div class="panel"><div class="buttons" role="toolbar" aria-label="Instagram media">
-      <button type="button" data-action="open" title="Open the current media file in a new tab" aria-label="Open current media in new tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/></svg>Open</button>
-      <button type="button" data-action="all" title="Download every media item in this post, in order" aria-label="Download all media in post"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V4h12M8 8h12v13H8ZM14 10v8m-3-3 3 3 3-3"/></svg>Download all</button>
-      <button type="button" data-action="download" title="Download the current item at the best available resolution" aria-label="Download current media"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg>Download</button>
-    </div><div class="status" role="status" aria-live="polite"></div></div>`;
-    const buttons = [...shadow.querySelectorAll('button')];
-    const status = shadow.querySelector('.status');
-    const say = (text, error = false) => { status.textContent = text; status.dataset.error = String(error); };
-    shadow.addEventListener('click', async event => {
-      const button = event.target.closest('button');
-      if (!button || busy) return;
-      busy = true; buttons.forEach(b => { b.disabled = true; });
-      jobController = new AbortController();
-      const { signal } = jobController;
-      let watch;
-      let started = 0;
-      try {
-        const ctx = context();
-        watch = setInterval(() => {
-          if (location.href !== ctx.page || !ctx.element.isConnected || fingerprint(ctx.element) !== ctx.fingerprint) jobController?.abort();
-        }, 250);
-        say('Finding this post’s best available media…');
-        const record = await resolveRecord(ctx, signal);
-        const all = button.dataset.action === 'all';
-        let selectedIndex = -1;
-        try { selectedIndex = currentIndex(record, ctx); } catch (error) { if (!all) throw error; }
-        const indexes = all ? record.items.map((_, i) => i) : [selectedIndex];
-        if (all && (!record.complete || record.count !== record.items.length || record.items.some(i => !i.variants.length))) {
-          throw new Error('Instagram has not exposed every item in this post. No bulk download was started. Reload the post and try again.');
-        }
-        for (const index of indexes) {
-          say(`Checking ${all ? `item ${index + 1} of ${record.count}` : 'current media'}…`);
-          const prepared = await prepareItem(record.items[index], ctx, index, selectedIndex, signal);
-          const filename = safeFilename(record, record.items[index], index + 1, prepared.ext);
-          assertCurrent(ctx, signal);
-          if (button.dataset.action === 'open') {
-            if (!openTab) throw new Error('The userscript manager’s open-tab permission is unavailable.');
-            await openTab(prepared.source, { active: true, insert: true, setParent: true });
-            say(`Opened ${prepared.width} × ${prepared.height}${prepared.hasAudio ? ' · audio included' : ''}.`);
-          } else {
-            const link = document.createElement('a');
-            link.href = temporaryURL(prepared.blob); link.download = filename;
-            link.style.display = 'none'; document.documentElement.append(link);
-            link.click(); link.remove(); started++;
-            say(`Sent ${started}${all ? ` of ${record.count}` : ''} to Safari Downloads · ${prepared.width} × ${prepared.height}${prepared.hasAudio ? ' · audio included' : ''}.`);
-          }
-        }
-      } catch (error) {
-        say(`${started ? `${started} file(s) sent to Safari before stopping. ` : ''}${signal.aborted ? 'The action was cancelled or timed out. Keep the item open and try again.' : error.message}`, true);
-      } finally {
-        clearInterval(watch); jobController = null;
-        busy = false; buttons.forEach(b => { b.disabled = false; });
+      :host{color-scheme:light dark;pointer-events:none}
+      *{box-sizing:border-box}
+      .media-controls{position:fixed;display:flex;align-items:flex-end;justify-content:flex-end;padding:10px;overflow:hidden;pointer-events:none}
+      .panel{
+        font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;
+        background:linear-gradient(145deg,#ffffff26,transparent 48%,#ffffff0a),#191720b8;
+        -webkit-backdrop-filter:blur(20px) saturate(165%);backdrop-filter:blur(20px) saturate(165%);
+        border:1px solid #ffffff42;border-top-color:#ffffff75;border-radius:22px;
+        box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #ffffff0a,0 4px 12px #0003;
+        padding:6px;max-width:100%;max-height:100%;overflow-y:auto;pointer-events:auto
       }
-    }, { signal: lifetime.signal });
+      .buttons{display:flex;justify-content:flex-end;gap:4px}
+      button{
+        font:inherit;display:grid;place-items:center;flex:0 0 44px;width:44px;height:44px;padding:0;
+        cursor:pointer;color:#fff;background:transparent;border:1px solid transparent;border-radius:15px;
+        -webkit-tap-highlight-color:transparent;
+        transition:background-color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease
+      }
+      button[data-action="download"]{
+        background:linear-gradient(155deg,#ffffff2e,transparent 60%),#7629dcbb;
+        border-color:#ffffff38;box-shadow:inset 0 1px 0 #ffffff3b,0 2px 6px #21004d33
+      }
+      @media(hover:hover){
+        button:enabled:hover{background-color:#ffffff24;border-color:#ffffff26;box-shadow:inset 0 1px 0 #ffffff1a}
+        button[data-action="download"]:enabled:hover{background-color:#8a40eced;border-color:#ffffff66;box-shadow:inset 0 1px 0 #ffffff42,0 2px 8px #21004d44}
+      }
+      button:enabled:active{transform:scale(.94);background-color:#ffffff38}
+      button[data-action="download"]:enabled:active{background-color:#6922c9}
+      button:focus-visible{outline:2px solid #fff;outline-offset:2px}
+      button:disabled{opacity:.45;cursor:wait}
+      svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 1px #0003);pointer-events:none}
+      .status{display:none;max-width:320px;margin:6px 0 0;padding:9px 11px;border-radius:15px;background:#15121edb;line-height:1.45;overflow-wrap:anywhere}
+      .status:not(:empty){display:block}
+      .status[data-error=true]{color:#ffc2c2}
+      @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.panel{background:#24212c}}
+      @media(prefers-reduced-transparency:reduce){.panel{background:#24212c;-webkit-backdrop-filter:none;backdrop-filter:none}}
+      @media(prefers-reduced-motion:reduce){button{transition:none}button:enabled:active{transform:none}}
+      @media(forced-colors:active){
+        .panel,.status{background:Canvas;color:CanvasText;-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none}
+        .panel,button{border:1px solid ButtonText}
+        button[data-action="download"]{background:Highlight;color:HighlightText;box-shadow:none}
+        button:focus-visible{outline-color:Highlight}
+        .status[data-error=true]{color:CanvasText}svg{filter:none}
+      }
+    </style>`;
+    const template = document.createElement('template');
+    template.innerHTML = `<div class="panel"><div class="buttons" role="toolbar" aria-label="Instagram media">
+      <button type="button" data-action="open" title="Open the current media file in a new tab" aria-label="Open current media in new tab"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7M10 14 21 3M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/></svg></button>
+      <button type="button" data-action="all" title="Download every media item in this post, in order" aria-label="Download all media in post"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8V4h12M8 8h12v13H8ZM14 10v8m-3-3 3 3 3-3"/></svg></button>
+      <button type="button" data-action="download" title="Download the current item at the best available resolution" aria-label="Download current media"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></svg></button>
+    </div><div class="status" role="status" aria-live="polite"></div></div>`;
+    const entries = new Map();
+    const mediaElements = new Set();
+    let frame = 0;
+    const setBusy = value => {
+      for (const entry of entries.values()) entry.buttons.forEach(button => { button.disabled = value; });
+    };
+    function attach(ctx) {
+      const wrapper = document.createElement('div'); wrapper.className = 'media-controls';
+      wrapper.append(template.content.cloneNode(true));
+      const controller = new AbortController();
+      const entry = { ctx, wrapper, controller };
+      const buttons = [...wrapper.querySelectorAll('button')];
+      const status = wrapper.querySelector('.status');
+      const say = (text, error = false) => { status.textContent = text; status.dataset.error = String(error); };
+      wrapper.addEventListener('click', async event => {
+        const button = event.target.closest('button');
+        event.stopPropagation();
+        if (!button || busy) return;
+        event.preventDefault();
+        busy = true; setBusy(true);
+        jobController = new AbortController();
+        const { signal } = jobController;
+        let watch;
+        let started = 0;
+        try {
+          const ctx = entry.ctx;
+          assertCurrent(ctx, signal);
+          const current = mediaContexts(mediaElements).find(value => value.element === ctx.element);
+          if (!current || current.route.key !== ctx.route.key) throw new Error('The selected media changed. Click the action again for the new item.');
+          activeContext = ctx;
+          watch = setInterval(() => {
+            try { assertCurrent(ctx, signal); } catch { jobController?.abort(); }
+          }, 250);
+          say('Finding this post’s best available media…');
+          const record = await resolveRecord(ctx, signal);
+          const all = button.dataset.action === 'all';
+          // Bulk actions also require proof that this toolbar's media belongs to
+          // the resolved post. The page route alone does not establish ownership.
+          const selectedIndex = currentIndex(record, ctx);
+          const indexes = all ? record.items.map((_, i) => i) : [selectedIndex];
+          if (all && (!record.complete || record.count !== record.items.length || record.items.some(i => !i.variants.length))) {
+            throw new Error('Instagram has not exposed every item in this post. No bulk download was started. Reload the post and try again.');
+          }
+          for (const index of indexes) {
+            say(`Checking ${all ? `item ${index + 1} of ${record.count}` : 'current media'}…`);
+            const prepared = await prepareItem(record.items[index], ctx, index, selectedIndex, signal);
+            const filename = safeFilename(record, record.items[index], index + 1, prepared.ext);
+            assertCurrent(ctx, signal);
+            if (button.dataset.action === 'open') {
+              if (!openTab) throw new Error('The userscript manager’s open-tab permission is unavailable.');
+              await openTab(prepared.source, { active: true, insert: true, setParent: true });
+              say(`Opened ${prepared.width} × ${prepared.height}${prepared.hasAudio ? ' · audio included' : ''}.`);
+            } else {
+              const link = document.createElement('a');
+              link.href = temporaryURL(prepared.blob); link.download = filename;
+              link.style.display = 'none'; document.documentElement.append(link);
+              link.click(); link.remove(); started++;
+              say(`Sent ${started}${all ? ` of ${record.count}` : ''} to Safari Downloads · ${prepared.width} × ${prepared.height}${prepared.hasAudio ? ' · audio included' : ''}.`);
+            }
+          }
+        } catch (error) {
+          say(`${started ? `${started} file(s) sent to Safari before stopping. ` : ''}${signal.aborted ? 'The action was cancelled or timed out. Keep the item open and try again.' : error.message}`, true);
+        } finally {
+          clearInterval(watch); jobController = null;
+          activeContext = null; busy = false; setBusy(false); schedule();
+        }
+      }, { signal: controller.signal });
+      entry.buttons = buttons; entry.say = say;
+      for (const type of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick']) {
+        wrapper.addEventListener(type, event => event.stopPropagation(), { signal: controller.signal });
+      }
+      buttons.forEach(button => { button.disabled = busy; });
+      shadow.append(wrapper);
+      entries.set(ctx.element, entry);
+      return entry;
+    }
+    function refresh() {
+      frame = 0;
+      for (const element of mediaElements) if (!element.isConnected) mediaElements.delete(element);
+      const contexts = mediaContexts(mediaElements);
+      const current = new Set(contexts.map(ctx => ctx.element));
+      for (const [element, entry] of entries) {
+        if (current.has(element)) continue;
+        if (activeContext?.element === element) jobController?.abort();
+        entry.controller.abort(); entry.wrapper.remove(); entries.delete(element);
+      }
+      for (const ctx of contexts) {
+        const entry = entries.get(ctx.element) || attach(ctx);
+        const changed = ctx.page !== entry.ctx.page || ctx.fingerprint !== entry.ctx.fingerprint || ctx.route.key !== entry.ctx.route.key;
+        if (changed) {
+          if (activeContext?.element === ctx.element) jobController?.abort();
+          entry.say('');
+        }
+        entry.ctx = ctx;
+        const { left, top, width, height } = ctx.rect;
+        const css = `left:${left}px;top:${top}px;width:${width}px;height:${height}px;`;
+        if (entry.wrapper.style.cssText !== css) entry.wrapper.style.cssText = css;
+      }
+    }
+    function schedule() {
+      if (!frame) frame = requestAnimationFrame(refresh);
+    }
+    function discover(root) {
+      if (root.nodeType !== 1 || root === host) return;
+      if (root.matches('video, img')) mediaElements.add(root);
+      for (const element of root.querySelectorAll('video, img')) mediaElements.add(element);
+    }
     document.documentElement.append(host);
+    discover(document.documentElement);
+    const observer = new MutationObserver(records => {
+      for (const record of records) for (const node of record.addedNodes || []) discover(node);
+      schedule();
+    });
+    observer.observe(document.body || document.documentElement, { subtree: true, childList: true, attributes: true,
+      attributeFilter: ['src', 'srcset', 'poster', 'style', 'class', 'aria-hidden', 'href'] });
+    for (const type of ['scroll', 'resize', 'popstate', 'hashchange', 'loadedmetadata', 'load', 'transitionend']) {
+      addEventListener(type, schedule, { capture: true, passive: true, signal: lifetime.signal });
+    }
+    addEventListener('pagehide', () => {
+      observer.disconnect(); cancelAnimationFrame(frame); frame = 0;
+    }, { signal: lifetime.signal });
+    addEventListener('pageshow', () => {
+      discover(document.documentElement);
+      observer.observe(document.body || document.documentElement, { subtree: true, childList: true, attributes: true,
+        attributeFilter: ['src', 'srcset', 'poster', 'style', 'class', 'aria-hidden', 'href'] });
+      schedule();
+    }, { signal: lifetime.signal });
+    refresh();
   }
   addEventListener('pagehide', () => {
     jobController?.abort();
