@@ -29,6 +29,8 @@ Each toolbar is bound to one displayed media element. The script reads records a
 
 Candidate files are ranked by dimensions, then video bitrate when available. The chosen response is checked before being opened or sent to Safari Downloads: images must decode, and video files must pass MP4 container and track checks with a video track and an audio track unless Instagram explicitly identifies the video as silent. Carousel filenames include their item number.
 
+The Reels feed can expose only a small identity record while keeping its complete MP4 in the displayed player's progressive implementation. The reader preserves the feed's video fields and joins that already-loaded source only when the player's media ID matches the exact Reel record. It continues through nearby containers when the first record has no source. Across matching player snapshots, an available HD source takes precedence over SD; an HD failure does not trigger an SD retry. Adaptive-player manifests are not read.
+
 **Best available** means the largest acceptable complete rendition exposed through these page sources. It is not a promise of the creator's original upload or of a higher resolution supplied only through streaming. The script keeps signed media URLs intact and does not silently substitute a smaller rendition when the selected resolution fails.
 
 The downloader makes no private Instagram API or GraphQL requests. It does not parse DASH/HLS manifests, collect streaming segments, remux tracks, or use an external download service. When Instagram exposes only a preview or a streaming source, the action reports that limitation. Media downloads are limited to Instagram's `cdninstagram.com` and `fbcdn.net` CDN domains.
@@ -43,6 +45,16 @@ node --test test/*.test.js
 ```
 
 Local tests cover selection and transport logic. They do not establish that a particular Instagram surface downloads correctly in Safari; that requires checking the saved files.
+
+### September 5, 2026: Reels feed source repair
+
+The error `Instagram has not exposed a complete file for this item. Let it load, then try again.` was reproduced on `/reels/DcvrVk5tbhv/`. Its raw media record lost its video type during page-context capture, and the reader missed the complete progressive MP4 supplied separately by its player. The repair handles both without additional Instagram requests or streaming reconstruction.
+
+The updated script was saved in the existing Safari/Tampermonkey editor, preserving script settings. After reloading the editor, its SHA-256 matched the local file. All 64 local tests, syntax validation, and whitespace checks passed. New regressions cover raw feed records, exact player-ID matching across nearby containers, HD preference across multiple snapshots, missing complete sources, and exclusion of manifests and unrelated data.
+
+Saved-file checks passed for the original Reel (720 × 1280 H.264, stereo AAC, 13.49 seconds) and the next Reel, `/reels/Dcp0GonTujj/`, reached without reloading (720 × 1280 H.264, stereo AAC, 14.54 seconds). Both files visually matched their displayed clips, had the correct shortcode in their filenames, and decoded fully with no video/audio errors. **Open** also played the second Reel's complete file in Safari. After navigating back to the original Reel, **Download all** saved exactly one file, byte-for-byte identical to its earlier current-item download.
+
+These checks used Tampermonkey 5.6.6240; this repair remains unverified in the Userscripts app and against the separate reference downloader. Other media types retain local regression coverage but were not rechecked live during this repair.
 
 ### September 5, 2026: media-attached toolbars
 

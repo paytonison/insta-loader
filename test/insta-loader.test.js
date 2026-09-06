@@ -543,6 +543,104 @@ test('every action still resolves blob Reel playback through its component item 
   });
 });
 
+test('Reels feed actions resolve raw loaded media metadata for blob playback', async t => {
+  for (const action of ['open', 'download', 'all']) await t.test(action, async () => {
+    const page = toolbarPage('https://www.instagram.com/reels/POST/');
+    const { media, article } = page.addMedia('POST', { id: '111', tag: 'video' });
+    article.querySelector('a').remove();
+    media.src = media.currentSrc = 'blob:https://www.instagram.com/reels-playback';
+    const raw = { pk: '111', code: 'POST', media_type: 2, has_audio: true,
+      video_versions: [{ url: `${cdn}/feed-reel.mp4?oh=signed%2Bquery`, width: 1080, height: 1920 }] };
+    media.__reactFiber$test.memoizedProps = { media: raw };
+    media.__reactFiber$test.return = { memoizedProps: { post: raw }, return: null };
+    page.inject();
+    assert.equal(page.panels().length, 1);
+    await page.click(page.panels()[0], action);
+    assert.deepEqual(page.requests, [`${cdn}/feed-reel.mp4?oh=signed%2Bquery`]);
+    assert.match(page.panels()[0].querySelector('.status').textContent, /intentional transport stop/);
+  });
+});
+
+test('a raw Reel without a complete video source reports streaming-only media without requesting its poster', async () => {
+  const page = toolbarPage('https://www.instagram.com/reels/POST/');
+  const { media, article } = page.addMedia('POST', { id: '111', tag: 'video' });
+  article.querySelector('a').remove();
+  media.src = media.currentSrc = 'blob:https://www.instagram.com/reels-playback';
+  media.poster = `${cdn}/preview.jpg`;
+  const raw = { pk: '111', code: 'POST', media_type: 2, has_audio: true, video_versions: [],
+    image_versions2: { candidates: [{ url: media.poster, width: 1080, height: 1920 }] } };
+  media.__reactFiber$test.memoizedProps = { media: raw };
+  media.__reactFiber$test.return = { memoizedProps: { post: raw }, return: null };
+  page.inject();
+  assert.equal(page.panels().length, 1);
+  await page.click(page.panels()[0]);
+  assert.deepEqual(page.requests, []);
+  assert.match(page.panels()[0].querySelector('.status').textContent, /only a preview or a streaming source, not a complete file/);
+});
+
+function loadedProgressivePlayer(videoFBID, hdSrc, sdSrc, includeProgressive = true) {
+  const adaptiveData = {};
+  Object.defineProperty(adaptiveData, 'manifest', { enumerable: true, get() { throw new Error('The downloader must not access a streaming manifest.'); } });
+  return { videoFBID, implementations: [
+    { typename: 'VideoPlayerOzImplementation', data: adaptiveData },
+    ...(includeProgressive ? [{ typename: 'VideoPlayerProgressiveImplementation', data: { hdSrc, sdSrc, hdSrcPreferred: true, tracking: 'player-secret' } }] : []),
+  ] };
+}
+
+test('Reels feed pairs a loaded progressive player with its exact raw fragment across DOM containers', async t => {
+  const hd = `${cdn}/progressive-hd.mp4?oh=hd%2Bsigned`;
+  const sd = `${cdn}/progressive-sd.mp4?oh=sd%2Bsigned`;
+  const cases = [
+    { name: 'HD is selected and a failed request does not fall back to SD', playerId: '111', hdSrc: hd, sdSrc: sd, expected: [hd] },
+    { name: 'SD is selected when the player supplies no HD source', playerId: '111', hdSrc: null, sdSrc: sd, expected: [sd] },
+    { name: 'a different player ID cannot supply this Reel', playerId: '222', hdSrc: hd, sdSrc: sd, expected: [] },
+    { name: 'an adaptive-only player does not expose a complete source', playerId: '111', includeProgressive: false, expected: [] },
+  ];
+  for (const scenario of cases) await t.test(scenario.name, async () => {
+    const page = toolbarPage('https://www.instagram.com/reels/POST/');
+    const { media, article, wrapper } = page.addMedia('POST', { id: '111', tag: 'video' });
+    article.querySelector('a').remove();
+    media.src = media.currentSrc = 'blob:https://www.instagram.com/reels-progressive-playback';
+    const raw = { pk: '111', code: 'POST', media_type: 2, has_audio: true, user: { username: 'artist' } };
+    media.__reactFiber$test.memoizedProps = { media: raw };
+    media.__reactFiber$test.return = null;
+    // The exact fragment is found first. Its missing resource list must not end
+    // the bounded DOM search before the selected player's later container.
+    Object.defineProperty(wrapper, '__reactFiber$player', { value: {
+      memoizedProps: loadedProgressivePlayer(scenario.playerId, scenario.hdSrc, scenario.sdSrc, scenario.includeProgressive), return: null,
+    } });
+    page.inject();
+    assert.equal(page.panels().length, 1);
+    await page.click(page.panels()[0]);
+    assert.deepEqual(page.requests, scenario.expected);
+    assert.match(page.panels()[0].querySelector('.status').textContent, scenario.expected.length
+      ? /intentional transport stop/ : /only a preview or a streaming source, not a complete file/);
+  });
+});
+
+test('matching progressive player snapshots prefer HD in either order without an SD retry', async t => {
+  const hd = `${cdn}/snapshot-hd.mp4?oh=hd%2Bsigned`;
+  const sd = `${cdn}/snapshot-sd.mp4?oh=sd%2Bsigned`;
+  for (const order of ['SD then HD', 'HD then SD']) await t.test(order, async () => {
+    const page = toolbarPage('https://www.instagram.com/reels/POST/');
+    const { media, article, wrapper } = page.addMedia('POST', { id: '111', tag: 'video' });
+    article.querySelector('a').remove();
+    media.src = media.currentSrc = 'blob:https://www.instagram.com/reels-snapshot-playback';
+    media.__reactFiber$test.memoizedProps = { media: { pk: '111', code: 'POST', media_type: 2, has_audio: true } };
+    media.__reactFiber$test.return = null;
+    const snapshots = [loadedProgressivePlayer('111', null, sd), loadedProgressivePlayer('111', hd, sd)];
+    if (order === 'HD then SD') snapshots.reverse();
+    Object.defineProperty(wrapper, '__reactFiber$snapshots', { value: {
+      memoizedProps: snapshots[0], return: { memoizedProps: snapshots[1], return: null },
+    } });
+    page.inject();
+    assert.equal(page.panels().length, 1);
+    await page.click(page.panels()[0]);
+    assert.deepEqual(page.requests, [hd], 'a failed HD request must not attempt an SD source from another matching snapshot');
+    assert.match(page.panels()[0].querySelector('.status').textContent, /intentional transport stop/);
+  });
+});
+
 test('Story toolbar belongs to the central item and safely rebinds a reused media element', async () => {
   const page = toolbarPage('https://www.instagram.com/stories/person/123/');
   page.addMedia('LEFT', { id: '111', left: 20, width: 320, height: 400 });
@@ -686,4 +784,72 @@ test('page-context capture copies only exact displayed media metadata and neares
   vm.runInContext(`(${core.captureDisplayedMedia.toString()})('capture-test',{kind:'post',token:'OTHER'});`,sandbox);
   const wrongPost = JSON.parse(output.textContent);
   assert.deepEqual(wrongPost.nodes,[]);assert.match(wrongPost.error,/exact post or Story/);
+});
+
+test('page-context capture preserves raw Reel resources and audio while excluding unrelated private data', async t => {
+  const vm = require('node:vm');
+  for (const hasAudio of [true, false]) await t.test(`has_audio=${hasAudio}`, () => {
+    const raw = {
+      pk: '111', code: 'POST', media_type: 2, has_audio: hasAudio, video_duration: 7.5,
+      original_width: 1080, original_height: 1920,
+      user: { username: 'artist', email: 'email-secret', friendship_status: { detail: 'friend-secret' } },
+      video_versions: [
+        { url: `${cdn}/small.mp4`, width: 720, height: 1280, bitrate: 100, tracking: 'resource-secret' },
+        { url: `${cdn}/full.mp4?oh=signed%2Bquery`, width: 1080, height: 1920, bitrate: 200, access_token: 'token-secret' },
+      ],
+      image_versions2: { candidates: [{ url: `${cdn}/poster.jpg`, width: 1080, height: 1920, tracking: 'poster-secret' }] },
+      caption: { text: 'caption-secret' }, tracking: 'tracking-secret',
+      unrelated: { code: 'POST', video_url: `${cdn}/outside.mp4` },
+    };
+    const marked = { getAttribute: name => name === 'data-insta-loader-read' ? 'raw-capture-test' : null };
+    Object.defineProperty(marked, '__reactFiber$test', { value: { memoizedProps: { media: raw }, return: null } });
+    const output = { tagName: 'SCRIPT', type: 'application/json', textContent: '' };
+    const document = {
+      getElementById: id => id === 'raw-capture-test' ? output : null,
+      querySelectorAll: selector => { assert.equal(selector, '[data-insta-loader-read]'); return [marked]; },
+    };
+    const sandbox = { document, TextEncoder };
+    vm.runInNewContext(`(${core.captureDisplayedMedia.toString()})('raw-capture-test',{kind:'post',token:'POST'});`, sandbox);
+    const result = JSON.parse(output.textContent);
+    assert.deepEqual(result.itemIds, ['111']);
+    assert.equal(result.nodes.length, 1);
+    const [record] = core.exactRecords(result.nodes, core.parseRoute('/reels/POST/'));
+    assert.equal(record.id, '111'); assert.equal(record.code, 'POST'); assert.equal(record.owner, 'artist');
+    assert.equal(record.complete, true); assert.equal(record.count, 1);
+    assert.equal(record.items[0].kind, 'video'); assert.equal(record.items[0].hasAudio, hasAudio);
+    assert.equal(record.items[0].duration, 7.5);
+    assert.deepEqual(record.items[0].variants, [
+      { url: `${cdn}/full.mp4?oh=signed%2Bquery`, width: 1080, height: 1920, bitrate: 200 },
+      { url: `${cdn}/small.mp4`, width: 720, height: 1280, bitrate: 100 },
+    ]);
+    assert.deepEqual(record.items[0].posters, [`${cdn}/poster.jpg`]);
+    assert.doesNotMatch(output.textContent, /secret|caption|tracking|email|friendship|access_token|outside\.mp4/);
+    vm.runInNewContext(`(${core.captureDisplayedMedia.toString()})('raw-capture-test',{kind:'post',token:'OTHER'});`, sandbox);
+    const wrongPost = JSON.parse(output.textContent);
+    assert.deepEqual(wrongPost.nodes, []); assert.match(wrongPost.error, /exact post or Story/);
+  });
+});
+
+test('page-context capture copies only the exact loaded progressive source without reading the manifest', () => {
+  const vm = require('node:vm');
+  const hd = `${cdn}/captured-hd.mp4?oh=hd%2Bsigned`;
+  const sd = `${cdn}/captured-sd.mp4?oh=sd%2Bsigned`;
+  const raw = { pk: '111', code: 'POST', media_type: 2, has_audio: true, user: { username: 'artist' }, caption: 'caption-secret' };
+  const wrapper = { tagName: 'DIV', parentElement: { tagName: 'ARTICLE', parentElement: null } };
+  Object.defineProperty(wrapper, '__reactFiber$player', { value: { memoizedProps: loadedProgressivePlayer('111', hd, sd), return: null } });
+  const marked = { tagName: 'VIDEO', parentElement: wrapper, getAttribute: name => name === 'data-insta-loader-read' ? 'player-capture-test' : null };
+  Object.defineProperty(marked, '__reactFiber$fragment', { value: { memoizedProps: { media: raw }, return: null } });
+  const output = { tagName: 'SCRIPT', type: 'application/json', textContent: '' };
+  const document = {
+    getElementById: id => id === 'player-capture-test' ? output : null,
+    querySelectorAll: selector => { assert.equal(selector, '[data-insta-loader-read]'); return [marked]; },
+  };
+  vm.runInNewContext(`(${core.captureDisplayedMedia.toString()})('player-capture-test',{kind:'post',token:'POST'});`, { document, TextEncoder });
+  const result = JSON.parse(output.textContent);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.itemIds, ['111']);
+  const [record] = core.exactRecords(result.nodes, core.parseRoute('/reels/POST/'));
+  assert.equal(record.complete, true); assert.equal(record.items[0].kind, 'video');
+  assert.deepEqual(record.items[0].variants.map(variant => variant.url), [hd]);
+  assert.doesNotMatch(output.textContent, /manifest|implementations|VideoPlayerOz|secret|tracking|caption|captured-sd/);
 });

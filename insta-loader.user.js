@@ -398,13 +398,15 @@
         for (const key of ['id', 'pk']) {
           if (own(node, key)) { const id = idString(node[key]); if (id) result[key] = id; }
         }
-        for (const key of ['code', 'shortcode', 'src', 'videoUrl']) {
+        for (const key of ['code', 'shortcode', 'src', 'videoUrl', 'video_url']) {
           if (own(node, key) && typeof node[key] === 'string') result[key] = node[key];
         }
-        for (const key of ['isVideo', 'isSidecar', 'hasAudio']) {
+        for (const key of ['isVideo', 'isSidecar', 'hasAudio', 'is_video', 'has_audio']) {
           if (own(node, key) && typeof node[key] === 'boolean') result[key] = node[key];
         }
-        if (own(node, 'videoDuration') && typeof node.videoDuration === 'number' && Number.isFinite(node.videoDuration)) result.videoDuration = node.videoDuration;
+        for (const key of ['videoDuration', 'video_duration', 'media_type', 'original_width', 'original_height']) {
+          if (own(node, key) && typeof node[key] === 'number' && Number.isFinite(node[key])) result[key] = node[key];
+        }
         if (own(node, 'dimensions') && node.dimensions && typeof node.dimensions === 'object') {
           result.dimensions = {};
           for (const key of ['width', 'height']) {
@@ -412,10 +414,17 @@
           }
         }
         if (own(node, 'owner') && node.owner && typeof node.owner.username === 'string') result.owner = { username: node.owner.username };
+        if (own(node, 'user') && node.user && typeof node.user.username === 'string') result.user = { username: node.user.username };
         const images = resources(node.displayResources, ['src', 'configWidth', 'configHeight']);
         const videos = resources(node.videoResources, ['src', 'url', 'width', 'height', 'configWidth', 'configHeight', 'bitrate']);
         if (images) result.displayResources = images;
         if (videos) result.videoResources = videos;
+        // Reels feed records use raw media fields rather than the converted
+        // component fields used by posts. Preserve the same narrow media data.
+        const rawImages = resources(node.image_versions2?.candidates, ['url', 'width', 'height']);
+        const rawVideos = resources(node.video_versions, ['url', 'width', 'height', 'bitrate']);
+        if (rawImages) result.image_versions2 = { candidates: rawImages };
+        if (rawVideos) result.video_versions = rawVideos;
         if (includeChildren && Array.isArray(node.sidecarChildren)) {
           result.sidecarChildren = node.sidecarChildren.map(child => child && typeof child === 'object' && !Array.isArray(child) ? copyNode(child, false) : {});
         }
@@ -426,6 +435,7 @@
       const seenNodes = new WeakSet();
       const seenIds = new Set();
       const seenFibers = new WeakSet();
+      const progressiveSources = new Map();
       let hasFiber = false;
       // Feed video portals can have a global playback fiber while their nearby
       // DOM container still belongs to the post. Stay within that media article.
@@ -437,6 +447,20 @@
           seenFibers.add(fiber); hasFiber = true;
           const props = fiber.memoizedProps;
           if (!props || typeof props !== 'object') continue;
+          // The Reels feed supplies complete files on the player separately
+          // from its media record. Read only that implementation, never streams.
+          const playerId = own(props, 'videoFBID') ? baseId(props.videoFBID) : null;
+          if (playerId && Array.isArray(props.implementations)) {
+            for (const implementation of props.implementations) {
+              if (implementation?.typename !== 'VideoPlayerProgressiveImplementation') continue;
+              const data = implementation.data;
+              const hasHD = typeof data?.hdSrc === 'string' && Boolean(data.hdSrc);
+              const url = hasHD ? data.hdSrc : data?.sdSrc;
+              if (typeof url !== 'string' || !url) continue;
+              if (!progressiveSources.has(playerId)) progressiveSources.set(playerId, { hd: new Set(), sd: new Set() });
+              progressiveSources.get(playerId)[hasHD ? 'hd' : 'sd'].add(url);
+            }
+          }
           for (const key of ['post', 'media', 'story', 'storyItem']) {
             if (!own(props, key)) continue;
             const node = props[key];
@@ -446,7 +470,17 @@
             if (matches(node) && !seenNodes.has(node)) { seenNodes.add(node); nodes.push(copyNode(node, true)); }
           }
         }
-        if (nodes.length || source.tagName === 'ARTICLE') break;
+        // An exact feed record can be only an identity fragment. Its complete
+        // player source may live on a later DOM ancestor within this boundary.
+        if (source.tagName === 'ARTICLE') break;
+      }
+      for (const node of nodes) {
+        if (!(node.media_type === 2 || node.is_video === true || node.isVideo === true)) continue;
+        const sources = progressiveSources.get(baseId(node.pk) || baseId(node.id));
+        if (sources) {
+          const urls = sources.hd.size ? sources.hd : sources.sd;
+          node.videoResources = [...(node.videoResources || []), ...[...urls].map(src => ({ src }))];
+        }
       }
       if (!hasFiber) { fail('Instagram has not exposed the selected media data yet.'); return; }
       publish(nodes.length ? { nodes, itemIds } : { nodes: [], itemIds, error: 'The displayed data does not identify this exact post or Story.' });
