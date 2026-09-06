@@ -475,7 +475,9 @@
         if (source.tagName === 'ARTICLE') break;
       }
       for (const node of nodes) {
-        if (!(node.media_type === 2 || node.is_video === true || node.isVideo === true)) continue;
+        // Story records can contain only an ID. The selected video and its
+        // exact player ID establish the kind when its complete source is joined.
+        if (element.tagName !== 'VIDEO') continue;
         const sources = progressiveSources.get(baseId(node.pk) || baseId(node.id));
         if (sources) {
           const urls = sources.hd.size ? sources.hd : sources.sd;

@@ -31,6 +31,8 @@ Candidate files are ranked by dimensions, then video bitrate when available. The
 
 The Reels feed can expose only a small identity record while keeping its complete MP4 in the displayed player's progressive implementation. The reader preserves the feed's video fields and joins that already-loaded source only when the player's media ID matches the exact Reel record. It continues through nearby containers when the first record has no source. Across matching player snapshots, an available HD source takes precedence over SD; an HD failure does not trigger an SD retry. Adaptive-player manifests are not read.
 
+Story media records can contain just an ID, with no video-type flag. For a selected video element, the reader also uses the exact matching player's complete source to identify those records as video. A photo element or a player with a different media ID cannot supply that missing video source.
+
 **Best available** means the largest acceptable complete rendition exposed through these page sources. It is not a promise of the creator's original upload or of a higher resolution supplied only through streaming. The script keeps signed media URLs intact and does not silently substitute a smaller rendition when the selected resolution fails.
 
 The downloader makes no private Instagram API or GraphQL requests. It does not parse DASH/HLS manifests, collect streaming segments, remux tracks, or use an external download service. When Instagram exposes only a preview or a streaming source, the action reports that limitation. Media downloads are limited to Instagram's `cdninstagram.com` and `fbcdn.net` CDN domains.
@@ -45,6 +47,14 @@ node --test test/*.test.js
 ```
 
 Local tests cover selection and transport logic. They do not establish that a particular Instagram surface downloads correctly in Safari; that requires checking the saved files.
+
+### September 5, 2026: Story video identity repair
+
+The complete-file error was reproduced on Story `3979248969268064365`. Its displayed video player supplied a complete progressive MP4 with the matching Story ID, but its separate media records contained only `id` or `pk`. The reader incorrectly required those records to already declare a video before attaching the player's source. It now accepts that exact source for the selected video element without requiring the missing flag.
+
+The updated script was saved in the existing Safari/Tampermonkey 5.6.6240 editor. After reloading the editor, its SHA-256 matched the local file. The original Story downloaded as a matching 720 × 1280 H.264 MP4 with stereo AAC, 60.14 seconds, and **Open** played it in Safari. After advancing without reloading, **Download all** saved exactly the current Story `3979251047444929200` as a matching 720 × 1280 H.264 MP4 with stereo AAC, 14.95 seconds. Both saved files had the correct Story IDs in their filenames and passed full video/audio decode.
+
+All 75 local tests, syntax validation, and whitespace checks passed. Added regressions cover all three actions with identity-only Story records, HD selection without an SD retry, mismatched players, streaming-only sources, unknown audio metadata, photo exclusion, and Story navigation. The Userscripts app and separate reference downloader remain unverified for this repair; other media types retain local regression coverage and were not rechecked live.
 
 ### September 5, 2026: Reels feed source repair
 

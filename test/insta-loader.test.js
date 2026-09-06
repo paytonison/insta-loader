@@ -641,6 +641,69 @@ test('matching progressive player snapshots prefer HD in either order without an
   });
 });
 
+test('Story video actions join identity-only fragments to the selected progressive player', async t => {
+  const hd = `${cdn}/story-hd.mp4?oh=hd%2Bsigned`;
+  const sd = `${cdn}/story-sd.mp4?oh=sd%2Bsigned`;
+  for (const action of ['open', 'download', 'all']) await t.test(action, async () => {
+    const page = toolbarPage('https://www.instagram.com/stories/person/123/');
+    const { media, article } = page.addMedia('STORY', { id: '123', tag: 'video', left: 500, width: 400, height: 700 });
+    article.querySelector('a').remove();
+    media.src = media.currentSrc = 'blob:https://www.instagram.com/story-playback';
+    media.__reactFiber$test.memoizedProps = { media: { id: '123_999' } };
+    media.__reactFiber$test.return = { memoizedProps: { storyItem: { pk: '123' } }, return: {
+      memoizedProps: loadedProgressivePlayer('123', hd, sd), return: null,
+    } };
+    page.inject();
+    assert.equal(page.panels().length, 1);
+    await page.click(page.panels()[0], action);
+    assert.deepEqual(page.requests, [hd], 'a failed HD request must not try SD or the video poster');
+    assert.match(page.panels()[0].querySelector('.status').textContent, /intentional transport stop/);
+  });
+});
+
+test('Story video without its own complete player source makes no media request', async t => {
+  for (const scenario of [
+    { name: 'different player identity', playerId: '999', includeProgressive: true },
+    { name: 'streaming-only player', playerId: '123', includeProgressive: false },
+  ]) await t.test(scenario.name, async () => {
+    const page = toolbarPage('https://www.instagram.com/stories/person/123/');
+    const { media } = page.addMedia('STORY', { id: '123', tag: 'video', left: 500, width: 400, height: 700 });
+    media.src = media.currentSrc = 'blob:https://www.instagram.com/story-playback';
+    media.poster = `${cdn}/story-poster.jpg`;
+    media.__reactFiber$test.memoizedProps = { storyItem: { id: '123_999' } };
+    media.__reactFiber$test.return = {
+      memoizedProps: loadedProgressivePlayer(scenario.playerId, `${cdn}/unavailable-hd.mp4`, `${cdn}/unavailable-sd.mp4`, scenario.includeProgressive), return: null,
+    };
+    page.inject();
+    await page.click(page.panels()[0]);
+    assert.deepEqual(page.requests, []);
+    assert.match(page.panels()[0].querySelector('.status').textContent, /complete file/);
+  });
+});
+
+test('Story video navigation rejects a stale action and rebinds the reused player', async () => {
+  const page = toolbarPage('https://www.instagram.com/stories/person/123/');
+  const { media } = page.addMedia('STORY', { id: '123', tag: 'video', left: 500, width: 400, height: 700 });
+  const fragment = { id: '123_999' };
+  const player = loadedProgressivePlayer('123', `${cdn}/story-123.mp4`, null);
+  media.src = media.currentSrc = 'blob:https://www.instagram.com/story-123';
+  media.__reactFiber$test.memoizedProps = { storyItem: fragment };
+  media.__reactFiber$test.return = { memoizedProps: player, return: null };
+  page.inject();
+  const panel = page.panels()[0];
+  await page.click(panel);
+  assert.deepEqual(page.requests, [`${cdn}/story-123.mp4`]);
+  page.sandbox.location.href = 'https://www.instagram.com/stories/person/124/';
+  media.src = media.currentSrc = 'blob:https://www.instagram.com/story-124';
+  fragment.id = '124_999'; player.videoFBID = '124';
+  player.implementations[1].data.hdSrc = `${cdn}/story-124.mp4`;
+  await page.click(panel);
+  assert.deepEqual(page.requests, [`${cdn}/story-123.mp4`], 'a stale toolbar must not start a download after navigation');
+  assert.equal(page.panels().length, 1);
+  await page.click(page.panels()[0]);
+  assert.deepEqual(page.requests, [`${cdn}/story-123.mp4`, `${cdn}/story-124.mp4`]);
+});
+
 test('Story toolbar belongs to the central item and safely rebinds a reused media element', async () => {
   const page = toolbarPage('https://www.instagram.com/stories/person/123/');
   page.addMedia('LEFT', { id: '111', left: 20, width: 320, height: 400 });
@@ -852,4 +915,39 @@ test('page-context capture copies only the exact loaded progressive source witho
   assert.equal(record.complete, true); assert.equal(record.items[0].kind, 'video');
   assert.deepEqual(record.items[0].variants.map(variant => variant.url), [hd]);
   assert.doesNotMatch(output.textContent, /manifest|implementations|VideoPlayerOz|secret|tracking|caption|captured-sd/);
+});
+
+test('Story capture enriches identity-only video fragments while preserving unknown audio and image kind', async t => {
+  const vm = require('node:vm');
+  const hd = `${cdn}/story-captured-hd.mp4?oh=hd%2Bsigned`;
+  const sd = `${cdn}/story-captured-sd.mp4?oh=sd%2Bsigned`;
+  for (const tagName of ['VIDEO', 'IMG']) await t.test(tagName, () => {
+    const marked = { tagName, parentElement: null, getAttribute: name => name === 'data-insta-loader-read' ? 'story-capture-test' : null };
+    Object.defineProperty(marked, '__reactFiber$story', { value: {
+      memoizedProps: { media: { id: '123_999', tracking: 'story-secret' } }, return: {
+        memoizedProps: { storyItem: { pk: '123' } }, return: {
+          memoizedProps: loadedProgressivePlayer('123', hd, sd), return: null,
+        },
+      },
+    } });
+    const output = { tagName: 'SCRIPT', type: 'application/json', textContent: '' };
+    const document = {
+      getElementById: id => id === 'story-capture-test' ? output : null,
+      querySelectorAll: selector => { assert.equal(selector, '[data-insta-loader-read]'); return [marked]; },
+    };
+    vm.runInNewContext(`(${core.captureDisplayedMedia.toString()})('story-capture-test',{kind:'story',token:'123'});`, { document, TextEncoder });
+    const result = JSON.parse(output.textContent);
+    assert.equal(result.error, undefined);
+    assert.deepEqual(result.itemIds, ['123']);
+    assert.deepEqual(result.nodes.map(node => node.id || node.pk), ['123_999', '123']);
+    const records = core.exactRecords(result.nodes, core.parseRoute('/stories/person/123/'));
+    for (const record of records) {
+      assert.equal(record.items[0].kind, tagName === 'VIDEO' ? 'video' : 'image');
+      assert.equal(record.items[0].hasAudio, null, 'the player URL must not fabricate silent-video metadata');
+      assert.equal(record.complete, tagName === 'VIDEO');
+      assert.deepEqual(record.items[0].variants.map(variant => variant.url), tagName === 'VIDEO' ? [hd] : []);
+    }
+    if (tagName === 'IMG') assert.ok(result.nodes.every(node => node.videoResources === undefined));
+    assert.doesNotMatch(output.textContent, /manifest|implementations|VideoPlayerOz|secret|tracking|story-captured-sd/);
+  });
 });
