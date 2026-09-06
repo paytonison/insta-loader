@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Insta Loader
 // @namespace    https://github.com/paytonison/insta-loader
-// @version      1.0.0
+// @version      2.0.0
 // @description  Open current media, download every item in a post, or save the current item at the best available resolution.
 // @author       paytonison
 // @match        https://www.instagram.com/*
