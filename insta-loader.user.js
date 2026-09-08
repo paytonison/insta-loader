@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Insta Loader
 // @namespace    https://github.com/paytonison/insta-loader
-// @version      2.0.0
+// @version      2.0.1
 // @description  Open current media, download every item in a post, or save the current item at the best available resolution.
 // @author       paytonison
 // @match        https://www.instagram.com/*
@@ -631,19 +631,19 @@
     shadow.innerHTML = `<style>
       :host{color-scheme:light dark;pointer-events:none}
       *{box-sizing:border-box}
-      .media-controls{position:fixed;display:flex;align-items:flex-end;justify-content:flex-end;padding:10px;overflow:hidden;pointer-events:none}
+      .media-controls{position:fixed;display:flex;align-items:flex-end;justify-content:flex-start;padding:10px;overflow:hidden;pointer-events:none}
       .panel{
         font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;
         background:linear-gradient(145deg,#ffffff26,transparent 48%,#ffffff0a),#191720b8;
         -webkit-backdrop-filter:blur(20px) saturate(165%);backdrop-filter:blur(20px) saturate(165%);
-        border:1px solid #ffffff42;border-top-color:#ffffff75;border-radius:22px;
+        border:1px solid #ffffff42;border-top-color:#ffffff75;border-radius:16.5px;
         box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #ffffff0a,0 4px 12px #0003;
-        padding:6px;max-width:100%;max-height:100%;overflow-y:auto;pointer-events:auto
+        padding:4.5px;max-width:100%;max-height:100%;overflow-y:auto;pointer-events:auto
       }
-      .buttons{display:flex;justify-content:flex-end;gap:4px}
+      .buttons{display:flex;justify-content:flex-start;gap:3px}
       button{
-        font:inherit;display:grid;place-items:center;flex:0 0 44px;width:44px;height:44px;padding:0;
-        cursor:pointer;color:#fff;background:transparent;border:1px solid transparent;border-radius:15px;
+        font:inherit;display:grid;place-items:center;flex:0 0 33px;width:33px;height:33px;padding:0;
+        cursor:pointer;color:#fff;background:transparent;border:1px solid transparent;border-radius:11.25px;
         -webkit-tap-highlight-color:transparent;
         transition:background-color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease
       }
@@ -659,7 +659,7 @@
       button[data-action="download"]:enabled:active{background-color:#6922c9}
       button:focus-visible{outline:2px solid #fff;outline-offset:2px}
       button:disabled{opacity:.45;cursor:wait}
-      svg{width:25px;height:25px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 1px #0003);pointer-events:none}
+      svg{width:18.75px;height:18.75px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 1px #0003);pointer-events:none}
       .status{display:none;max-width:320px;margin:6px 0 0;padding:9px 11px;border-radius:15px;background:#15121edb;line-height:1.45;overflow-wrap:anywhere}
       .status:not(:empty){display:block}
       .status[data-error=true]{color:#ffc2c2}
