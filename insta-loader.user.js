@@ -75,7 +75,9 @@
     for (const value of hasVideo ? videos : images) {
       const url = cleanMediaUrl(typeof value === 'string' ? value : value?.url || value?.src);
       if (!url) continue;
-      variants.push({ url, width: positiveNumber(value?.width || value?.config_width || value?.configWidth || node.original_width || node.dimensions?.width), height: positiveNumber(value?.height || value?.config_height || value?.configHeight || node.original_height || node.dimensions?.height), bitrate: positiveNumber(value?.bitrate || value?.bit_rate) });
+      // Item/original dimensions do not describe each CDN rendition. In popup
+      // carousels, src/videoUrl can repeat a smaller, explicitly sized resource.
+      variants.push({ url, width: positiveNumber(value?.width || value?.config_width || value?.configWidth), height: positiveNumber(value?.height || value?.config_height || value?.configHeight), bitrate: positiveNumber(value?.bitrate || value?.bit_rate) });
     }
     variants.sort((a, b) => b.width * b.height - a.width * a.height || b.width - a.width || b.height - a.height || b.bitrate - a.bitrate);
     const seen = new Set();
@@ -244,7 +246,7 @@
   }
 
   if (typeof module === 'object' && module.exports && typeof document === 'undefined') {
-    module.exports = { parseRoute, exactRecords, cleanMediaUrl, mediaKey, safeFilename, inspectMP4, requestBytes, imageType, srcsetVariants, captureDisplayedMedia };
+    module.exports = { parseRoute, exactRecords, cleanMediaUrl, mediaKey, safeFilename, inspectMP4, requestBytes, imageType, srcsetVariants, captureDisplayedMedia, validateBytes, prepareVariants };
     return;
   }
   if (!/^(www\.)?instagram\.com$/.test(location.hostname) || window.top !== window.self) return;
@@ -404,14 +406,8 @@
         for (const key of ['isVideo', 'isSidecar', 'hasAudio', 'is_video', 'has_audio']) {
           if (own(node, key) && typeof node[key] === 'boolean') result[key] = node[key];
         }
-        for (const key of ['videoDuration', 'video_duration', 'media_type', 'original_width', 'original_height']) {
+        for (const key of ['videoDuration', 'video_duration', 'media_type']) {
           if (own(node, key) && typeof node[key] === 'number' && Number.isFinite(node[key])) result[key] = node[key];
-        }
-        if (own(node, 'dimensions') && node.dimensions && typeof node.dimensions === 'object') {
-          result.dimensions = {};
-          for (const key of ['width', 'height']) {
-            if (typeof node.dimensions[key] === 'number' && Number.isFinite(node.dimensions[key])) result.dimensions[key] = node.dimensions[key];
-          }
         }
         if (own(node, 'owner') && node.owner && typeof node.owner.username === 'string') result.owner = { username: node.owner.username };
         if (own(node, 'user') && node.user && typeof node.user.username === 'string') result.user = { username: node.user.username };
@@ -586,23 +582,43 @@
     } finally { URL.revokeObjectURL(url); }
   }
 
+  async function prepareVariants(variants, fetchVariant) {
+    const compare = (a, b) => b.width * b.height - a.width * a.height || b.bitrate - a.bitrate;
+    const ranked = [...variants].sort(compare)
+      .filter((v, i, all) => all.findIndex(other => other.url === v.url) === i);
+    // A distinct scalar/player URL has no advertised rendition size. Inspect it
+    // before choosing; treating unknown dimensions as low quality can miss the
+    // largest exposed file. Keep only the best inspected blob in memory.
+    let measured = null;
+    for (const variant of ranked.filter(v => !v.width || !v.height)) {
+      let prepared;
+      try { prepared = await fetchVariant(variant); }
+      catch (error) { throw new Error(`A source without rendition dimensions could not be checked: ${error.message}`); }
+      const size = { width: prepared.width, height: prepared.height, bitrate: variant.bitrate };
+      if (!measured || compare(size, measured.size) < 0) measured = { size, prepared };
+    }
+    const known = ranked.filter(v => v.width && v.height);
+    if (measured && (!known.length || compare(measured.size, known[0]) <= 0)) return measured.prepared;
+    if (!known.length) throw new Error('Instagram has exposed only a preview or a streaming source, not a complete file.');
+    // Retry only equivalent top renditions; a failed larger file must never
+    // cause an already inspected smaller file to be saved instead.
+    let failure;
+    for (const variant of known.filter(v => compare(v, known[0]) === 0).slice(0, 4)) {
+      try { return await fetchVariant(variant); }
+      catch (error) { failure = error; }
+    }
+    throw failure;
+  }
+
   async function prepareItem(item, ctx, index, selectedIndex, signal) {
-    let variants = [...item.variants];
+    const variants = [...item.variants];
     const displayedURLs = [ctx.element.currentSrc, ctx.element.src, ctx.element.poster].map(mediaKey).filter(Boolean);
     const ownsElement = (ctx.itemIds || []).includes(item.id?.split('_')[0])
       || [...item.variants.map(v => v.url), ...item.posters].some(url => displayedURLs.includes(mediaKey(url)));
     if (index === selectedIndex && ctx.kind === item.kind && ownsElement) variants.push(...srcsetVariants(ctx.element));
-    variants.sort((a, b) => b.width * b.height - a.width * a.height || b.bitrate - a.bitrate);
-    variants = variants.filter((v, i) => variants.findIndex(other => other.url === v.url) === i);
-    if (!variants.length) throw new Error(`Item ${index + 1}: Instagram has exposed only a preview or a streaming source, not a complete file.`);
-    const pixels = variants[0].width * variants[0].height;
-    const bitrate = variants[0].bitrate;
-    // Mirrors at the same resolution can differ in availability/audio. Never
-    // silently drop to a smaller image or video after a failed request.
-    let reason = '';
-    for (const variant of variants.filter(v => v.width * v.height === pixels && v.bitrate === bitrate).slice(0, 4)) {
-      assertCurrent(ctx, signal);
-      try {
+    try {
+      return await prepareVariants(variants, async variant => {
+        assertCurrent(ctx, signal);
         if (!manager) throw new Error('Enable this script in Tampermonkey and allow its media requests.');
         const response = await requestBytes(variant.url, signal, manager);
         assertCurrent(ctx, signal);
@@ -613,12 +629,11 @@
         const result = await validateBytes(response.response, item, variant, signal);
         assertCurrent(ctx, signal);
         return { ...result, source: variant.url };
-      } catch (error) {
-        if (signal.aborted) throw error;
-        reason = error.message;
-      }
+      });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new Error(`Item ${index + 1}: ${error.message} A lower-resolution file was not substituted.`);
     }
-    throw new Error(`Item ${index + 1}: ${reason} A lower-resolution file was not substituted.`);
   }
 
   let jobController = null;

@@ -50,6 +50,8 @@ The script reads media data Instagram has already loaded into the page and match
 
 Available files are ranked by resolution, then video bitrate when provided. **Best available** means the highest-ranked complete rendition exposed through those sources. It does not guarantee the creator's original upload or a higher resolution available only through streaming. If that rendition fails, the script reports the problem instead of silently saving a smaller one.
 
+Dimensions belong to the individual rendition URL, not the parent post or original upload. Duplicate URLs share their explicitly supplied rendition dimensions. A distinct URL without dimensions is fetched and inspected before selection; if it cannot be checked, the action reports that uncertainty instead of assuming the other files are better.
+
 Before opening or saving a file, the script checks that:
 
 - The response is a complete file from Instagram's media CDN.
@@ -84,9 +86,10 @@ Edit `insta-loader.user.js` directly. With Node.js installed, check its syntax f
 
 ```sh
 node --check insta-loader.user.js
+node --test tests/media-renditions.test.cjs
 ```
 
-Syntax validation does not verify Instagram compatibility. Check behavior in Safari with Tampermonkey and inspect the saved files for the correct item, dimensions, playback, audio, and carousel order.
+The regression tests cover rendition dimensions, duplicate URLs, unknown-size source selection, mixed-carousel order and filenames, and MP4 dimension/audio guards. Their synthetic MP4 headers do not establish playback compatibility. Syntax and unit tests do not verify Instagram compatibility. Check behavior in Safari with the target userscript manager and inspect the saved files for the correct item, dimensions, playback, audio, and carousel order.
 
 ## License
 
