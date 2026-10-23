@@ -40,10 +40,9 @@ for (const [name, schema] of Object.entries(schemas)) {
     assert.deepEqual(item.variants, [{ url: mediaURL('item-10.jpg'), width: 2561, height: 2049, bitrate: 0 }]);
   });
 
-  test(`${name}: a complete video URL retains its own dimensions and audio metadata`, () => {
+  test(`${name}: a complete video URL retains its own dimensions`, () => {
     const item = mixedCarousel(schema).items[2];
     assert.equal(item.kind, 'video');
-    assert.equal(item.hasAudio, true);
     assert.deepEqual(item.variants, [{ url: mediaURL('item-3.mp4'), width: 900, height: 720, bitrate: 0 }]);
   });
 }
@@ -190,7 +189,7 @@ function mp4Headers(width, height, audio = true) {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
-test('the byte validator accepts the normalized 900×720 MP4 and still enforces dimensions and audio', async () => {
+test('the byte validator accepts the normalized 900×720 MP4 and still enforces dimensions', async () => {
   const item = mixedCarousel(schemas.camel).items[2];
   const signal = new AbortController().signal;
   const result = await validateBytes(mp4Headers(900, 720), item, item.variants[0], signal);
@@ -199,5 +198,145 @@ test('the byte validator accepts the normalized 900×720 MP4 and still enforces 
   assert.equal(result.hasAudio, true);
   assert.equal(result.ext, 'mp4');
   await assert.rejects(validateBytes(mp4Headers(640, 512), item, item.variants[0], signal), /smaller than the rendition/);
-  await assert.rejects(validateBytes(mp4Headers(900, 720, false), item, item.variants[0], signal), /no audio track/);
+});
+
+test('a silent video must still meet its advertised dimensions regardless of audio metadata', async () => {
+  const signal = new AbortController().signal;
+  const variant = { url: mediaURL('video-only.mp4'), width: 900, height: 720, bitrate: 0 };
+  for (const hasAudio of [true, false, null, undefined]) {
+    await assert.rejects(validateBytes(mp4Headers(640, 512, false), { kind: 'video', hasAudio }, variant, signal), /smaller than the rendition/);
+  }
+});
+
+test('a complete silent video is accepted regardless of audio metadata', async () => {
+  const variant = { url: mediaURL('silent.mp4'), width: 900, height: 720, bitrate: 0 };
+  const bytes = mp4Headers(900, 720, false);
+  for (const hasAudio of [true, false, null, undefined]) {
+    const result = await validateBytes(bytes, { kind: 'video', hasAudio }, variant, new AbortController().signal);
+    assert.ok(result.blob instanceof Blob);
+    assert.equal(result.blob.type, 'video/mp4');
+    assert.equal(result.blob.size, bytes.byteLength);
+    assert.equal(result.ext, 'mp4');
+    assert.equal(result.hasVideo, true);
+    assert.equal(result.hasAudio, false);
+    assert.equal(result.width, 900);
+    assert.equal(result.height, 720);
+  }
+});
+
+for (const [width, height] of [[900, 720], [1280, 1024]]) {
+  test(`a dimensionless video lacking audio permits a ${width}×${height} complete rendition`, async () => {
+    const unknown = { url: mediaURL('unknown-video-only.mp4'), width: 0, height: 0, bitrate: 0 };
+    const known = { url: mediaURL('known-complete.mp4'), width, height, bitrate: 0 };
+    const calls = [];
+    const result = await prepareVariants([unknown, known], async variant => {
+      calls.push(variant.url);
+      const bytes = variant === unknown ? mp4Headers(900, 720, false) : mp4Headers(width, height, true);
+      const validated = await validateBytes(bytes, { kind: 'video', hasAudio: null }, variant, new AbortController().signal);
+      return { ...validated, source: variant.url };
+    });
+    assert.equal(result.source, known.url);
+    assert.equal(result.hasAudio, true);
+    assert.deepEqual(calls, [unknown.url, known.url]);
+  });
+}
+
+test('a dimensionless silent video is saved without substituting a smaller rendition with audio', async () => {
+  const unknown = { url: mediaURL('unknown-video-only.mp4'), width: 0, height: 0, bitrate: 0 };
+  const smaller = { url: mediaURL('smaller-complete.mp4'), width: 640, height: 512, bitrate: 0 };
+  const calls = [];
+  const result = await prepareVariants([unknown, smaller], async variant => {
+    calls.push(variant.url);
+    const bytes = variant === unknown ? mp4Headers(900, 720, false) : mp4Headers(640, 512, true);
+    const validated = await validateBytes(bytes, { kind: 'video', hasAudio: null }, variant, new AbortController().signal);
+    return { ...validated, source: variant.url };
+  });
+  assert.equal(result.source, unknown.url);
+  assert.equal(result.width, 900);
+  assert.equal(result.height, 720);
+  assert.equal(result.hasAudio, false);
+  assert.equal(result.blob.type, 'video/mp4');
+  assert.deepEqual(calls, [unknown.url]);
+});
+
+test('a smaller measured silent file is not saved if a larger advertised rendition fails', async () => {
+  const unknown = { url: mediaURL('unknown-silent.mp4'), width: 0, height: 0, bitrate: 0 };
+  const larger = { url: mediaURL('larger-unavailable.mp4'), width: 1280, height: 1024, bitrate: 0 };
+  const calls = [];
+  await assert.rejects(prepareVariants([unknown, larger], async variant => {
+    calls.push(variant.url);
+    if (variant === larger) throw new Error('The media request failed.');
+    return validateBytes(mp4Headers(900, 720, false), { kind: 'video', hasAudio: null }, variant, new AbortController().signal);
+  }), /media request failed/);
+  assert.deepEqual(calls, [unknown.url, larger.url]);
+});
+
+for (const [width, height] of [[0, 0], [900, 720]]) {
+  test(`a ${width ? 'known' : 'dimensionless'} silent rendition is saved if an equivalent source returns HTTP 403`, async () => {
+    const silent = { url: mediaURL('silent.mp4'), width, height, bitrate: 0 };
+    const unavailable = { url: mediaURL('equivalent-unavailable.mp4'), width: 900, height: 720, bitrate: 0 };
+    const calls = [];
+    let silentPrepared;
+    const result = await prepareVariants([silent, unavailable], async variant => {
+      calls.push(variant.url);
+      if (variant === unavailable) throw new Error('The media server returned HTTP 403 instead of a complete file.');
+      silentPrepared = await validateBytes(mp4Headers(900, 720, false), { kind: 'video', hasAudio: null }, variant, new AbortController().signal);
+      return silentPrepared;
+    });
+    assert.equal(result, silentPrepared, 'reuse the validated silent candidate despite the later request error');
+    assert.equal(result.width, 900);
+    assert.equal(result.height, 720);
+    assert.equal(result.hasAudio, false);
+    assert.equal(result.blob.type, 'video/mp4');
+    assert.deepEqual(calls, [silent.url, unavailable.url]);
+  });
+}
+
+for (const [width, height] of [[0, 0], [900, 720]]) {
+  for (const audioFirst of [false, true]) {
+    test(`equivalent ${width ? 'known' : 'dimensionless'} sources prefer audio when the audio file is ${audioFirst ? 'first' : 'second'}`, async () => {
+      const silent = { url: mediaURL('video-only.mp4'), width, height, bitrate: 0 };
+      const complete = { url: mediaURL('complete.mp4'), width, height, bitrate: 0 };
+      const variants = audioFirst ? [complete, silent] : [silent, complete];
+      const calls = [];
+      const result = await prepareVariants(variants, async variant => {
+        calls.push(variant.url);
+        const validated = await validateBytes(mp4Headers(900, 720, variant === complete), { kind: 'video', hasAudio: null }, variant, new AbortController().signal);
+        return { ...validated, source: variant.url };
+      });
+      assert.equal(result.source, complete.url);
+      assert.equal(result.hasAudio, true);
+      assert.deepEqual(calls, width && audioFirst ? [complete.url] : variants.map(variant => variant.url));
+    });
+  }
+}
+
+test('equal advertised dimensions do not let audio displace a larger measured silent video', async () => {
+  const larger = { url: mediaURL('larger-measured-silent.mp4'), width: 900, height: 720, bitrate: 0 };
+  const smaller = { url: mediaURL('smaller-measured-audio.mp4'), width: 900, height: 720, bitrate: 0 };
+  const calls = [];
+  const result = await prepareVariants([larger, smaller], async variant => {
+    calls.push(variant.url);
+    const bytes = variant === larger ? mp4Headers(1280, 1024, false) : mp4Headers(900, 720, true);
+    const validated = await validateBytes(bytes, { kind: 'video' }, variant, new AbortController().signal);
+    return { ...validated, source: variant.url };
+  });
+  assert.equal(result.source, larger.url);
+  assert.equal(result.width, 1280);
+  assert.equal(result.height, 1024);
+  assert.equal(result.hasAudio, false);
+  assert.deepEqual(calls, [larger.url, smaller.url]);
+});
+
+test('an unreadable dimensionless video remains fatal even with another complete rendition', async () => {
+  const unknown = { url: mediaURL('unreadable.mp4'), width: 0, height: 0, bitrate: 0 };
+  const known = { url: mediaURL('known-complete.mp4'), width: 900, height: 720, bitrate: 0 };
+  const calls = [];
+  await assert.rejects(prepareVariants([unknown, known], async variant => {
+    calls.push(variant.url);
+    const bytes = variant === unknown ? new Uint8Array([0, 1, 2, 3]).buffer : mp4Headers(900, 720, true);
+    const validated = await validateBytes(bytes, { kind: 'video', hasAudio: true }, variant, new AbortController().signal);
+    return { ...validated, source: variant.url };
+  }), /source without rendition dimensions could not be checked/);
+  assert.deepEqual(calls, [unknown.url]);
 });

@@ -44,9 +44,11 @@ username-POSTCODE-02.mp4
 
 **Download all** requires sources for every item before it starts. It then checks and sends each file individually. If a later item fails or the action is cancelled, earlier files may already have been sent; the status reports how many. Safari may present multiple save dialogs during a bulk download.
 
+Videos without audio download automatically, including during **Download all**, even if Instagram's metadata says they contain audio. The status reports **no audio track** when the selected file has none. No extra confirmation is required.
+
 ## Media quality
 
-The script reads media data Instagram has already loaded into the page and matches it to the selected post, carousel item, or Story. For videos, it can use a complete file exposed by the matching player; for photos, it also considers the image sources available on the page.
+The script reads media data Instagram has already loaded into the page and matches it to the selected post, carousel item, or Story. For videos, it can use a complete file exposed by the matching player, including a player belonging to an exact carousel child; for photos, it also considers the image sources available on the page.
 
 Available files are ranked by resolution, then video bitrate when provided. **Best available** means the highest-ranked complete rendition exposed through those sources. It does not guarantee the creator's original upload or a higher resolution available only through streaming. If that rendition fails, the script reports the problem instead of silently saving a smaller one.
 
@@ -56,10 +58,12 @@ Before opening or saving a file, the script checks that:
 
 - The response is a complete file from Instagram's media CDN.
 - An image has a recognized format and can be decoded by the browser.
-- A video is a complete, non-fragmented MP4 with a usable video track and an audio track, unless Instagram explicitly identifies it as silent.
+- A video is a complete, non-fragmented MP4 with a usable video track. Its actual audio-track presence is reported, but missing audio does not block the download.
 - Image width and video pixel count are not below the advertised values, when those values are available.
 
 Video checks inspect the file's container and tracks; they do not guarantee that every codec will play in every browser. The downloader does not re-encode media or combine separate audio and video streams.
+
+A file with audio is preferred over an equivalent file without audio at the same resolution and advertised bitrate. If the best available complete file has no audio, it is saved as supplied. The downloader does not lower the selected quality to obtain audio, reconstruct missing audio, or remove an existing audio track. Instagram's audio flags do not override the actual file's tracks.
 
 ## Limits
 
@@ -78,7 +82,7 @@ Video checks inspect the file's container and tracks; they do not guarantee that
 | **Not every carousel item is available** | Reload the post and retry **Download all**. It requires the complete set of item sources before starting. |
 | **A media request fails or times out** | Check Tampermonkey's site permissions, content blockers, and your connection, then retry. |
 | **The selected media changed or the action was cancelled** | Keep the intended item visible and open, then start the action again. |
-| **A video has no audio track** | The file is rejected unless Instagram marks the video as silent. The downloader cannot attach a separate audio stream. |
+| **A saved video has no audio track** | The selected complete file contains no audio. It is downloaded automatically and labeled accordingly; the downloader cannot attach a separate audio stream. |
 
 ## Development
 
@@ -86,10 +90,10 @@ Edit `insta-loader.user.js` directly. With Node.js installed, check its syntax f
 
 ```sh
 node --check insta-loader.user.js
-node --test tests/media-renditions.test.cjs
+node --test tests/*.test.cjs
 ```
 
-The regression tests cover rendition dimensions, duplicate URLs, unknown-size source selection, mixed-carousel order and filenames, and MP4 dimension/audio guards. Their synthetic MP4 headers do not establish playback compatibility. Syntax and unit tests do not verify Instagram compatibility. Check behavior in Safari with the target userscript manager and inspect the saved files for the correct item, dimensions, playback, audio, and carousel order.
+The regression tests cover rendition dimensions, duplicate URLs, unknown-size source selection, exact player-to-carousel-child association, mixed-carousel order and filenames, and MP4 dimension/audio guards. Their synthetic MP4 headers do not establish playback compatibility. Syntax and unit tests do not verify Instagram compatibility. Check behavior in Safari with the target userscript manager and inspect the saved files for the correct item, dimensions, playback, audio, and carousel order.
 
 ## License
 

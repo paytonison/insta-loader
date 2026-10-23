@@ -83,7 +83,7 @@
     const seen = new Set();
     const unique = variants.filter(variant => { if (seen.has(variant.url)) return false; seen.add(variant.url); return true; });
     const posters = hasVideo ? [...new Set(images.map((value) => cleanMediaUrl(typeof value === 'string' ? value : value?.url || value?.src)).filter(Boolean))] : [];
-    return { id: recordId(node.pk ?? node.id), kind, variants: unique, posters, hasAudio: typeof node.has_audio === 'boolean' ? node.has_audio : typeof node.hasAudio === 'boolean' ? node.hasAudio : null, duration: positiveNumber(node.video_duration ?? node.videoDuration ?? node.duration) || null };
+    return { id: recordId(node.pk ?? node.id), kind, variants: unique, posters, duration: positiveNumber(node.video_duration ?? node.videoDuration ?? node.duration) || null };
   }
 
   function exactRecords(payload, route) {
@@ -246,7 +246,7 @@
   }
 
   if (typeof module === 'object' && module.exports && typeof document === 'undefined') {
-    module.exports = { parseRoute, exactRecords, cleanMediaUrl, mediaKey, safeFilename, inspectMP4, requestBytes, imageType, srcsetVariants, captureDisplayedMedia, validateBytes, prepareVariants };
+    module.exports = { parseRoute, exactRecords, cleanMediaUrl, mediaKey, safeFilename, inspectMP4, requestBytes, imageType, srcsetVariants, captureDisplayedMedia, joinPlayerSources, validateBytes, prepareVariants };
     return;
   }
   if (!/^(www\.)?instagram\.com$/.test(location.hostname) || window.top !== window.self) return;
@@ -349,9 +349,24 @@
       ...item,
       variants: [...item.variants, ...versions.flatMap(r => r.items[i].variants)],
       posters: [...item.posters, ...versions.flatMap(r => r.items[i].posters)],
-      hasAudio: versions.some(r => r.items[i].hasAudio === true) ? true : versions.some(r => r.items[i].hasAudio === false) ? false : item.hasAudio,
     }));
     return { ...record, items, complete: items.length === record.count && items.every(i => i.variants.length) };
+  }
+
+  function joinPlayerSources(record, playerSources) {
+    const items = record.items.map(item => {
+      const player = playerSources.find(source => source.id === item.id?.split('_')[0]);
+      const urls = (player?.urls || []).map(cleanMediaUrl).filter(Boolean);
+      if (!urls.length) return item;
+      const variants = item.kind === 'video' ? [...item.variants] : [];
+      for (const url of urls) {
+        if (!variants.some(variant => variant.url === url)) variants.push({ url, width: 0, height: 0, bitrate: 0 });
+      }
+      // An exact player ID can supply a Story/thumbnail identity fragment.
+      return { ...item, kind: 'video', variants,
+        posters: item.kind === 'video' ? item.posters : [...item.posters, ...item.variants.map(variant => variant.url)] };
+    });
+    return { ...record, items, complete: items.length === record.count && items.every(item => item.variants.length > 0) };
   }
 
   function captureDisplayedMedia(requestId, route) {
@@ -403,7 +418,7 @@
         for (const key of ['code', 'shortcode', 'src', 'videoUrl', 'video_url']) {
           if (own(node, key) && typeof node[key] === 'string') result[key] = node[key];
         }
-        for (const key of ['isVideo', 'isSidecar', 'hasAudio', 'is_video', 'has_audio']) {
+        for (const key of ['isVideo', 'isSidecar', 'is_video']) {
           if (own(node, key) && typeof node[key] === 'boolean') result[key] = node[key];
         }
         for (const key of ['videoDuration', 'video_duration', 'media_type']) {
@@ -445,7 +460,8 @@
           if (!props || typeof props !== 'object') continue;
           // The Reels feed supplies complete files on the player separately
           // from its media record. Read only that implementation, never streams.
-          const playerId = own(props, 'videoFBID') ? baseId(props.videoFBID) : null;
+          const playerId = element.tagName === 'VIDEO' && own(props, 'videoFBID') ? baseId(props.videoFBID) : null;
+          if (playerId && !seenIds.has(playerId)) { seenIds.add(playerId); itemIds.push(playerId); }
           if (playerId && Array.isArray(props.implementations)) {
             for (const implementation of props.implementations) {
               if (implementation?.typename !== 'VideoPlayerProgressiveImplementation') continue;
@@ -470,24 +486,19 @@
         // player source may live on a later DOM ancestor within this boundary.
         if (source.tagName === 'ARTICLE') break;
       }
-      for (const node of nodes) {
-        // Story records can contain only an ID. The selected video and its
-        // exact player ID establish the kind when its complete source is joined.
-        if (element.tagName !== 'VIDEO') continue;
-        const sources = progressiveSources.get(baseId(node.pk) || baseId(node.id));
-        if (sources) {
-          const urls = sources.hd.size ? sources.hd : sources.sd;
-          node.videoResources = [...(node.videoResources || []), ...[...urls].map(src => ({ src }))];
-        }
-      }
       if (!hasFiber) { fail('Instagram has not exposed the selected media data yet.'); return; }
-      publish(nodes.length ? { nodes, itemIds } : { nodes: [], itemIds, error: 'The displayed data does not identify this exact post or Story.' });
+      // Portal players may expose an exact video ID without the post record.
+      // Join these sources after reading the route-matched embedded page data.
+      const playerSources = [...progressiveSources].map(([id, sources]) => ({ id, urls: [...(sources.hd.size ? sources.hd : sources.sd)] }));
+      publish({ nodes, itemIds, playerSources,
+        ...(!nodes.length ? { error: 'The displayed data does not identify this exact post or Story.' } : {}) });
     } catch {
       fail('The selected media metadata could not be read. Let it finish loading and try again.');
     }
   }
 
   function displayedRecords(ctx) {
+    ctx.itemIds = []; ctx.playerSources = []; ctx.readError = null;
     const requestId = `${HOST_ID}-read-${Date.now().toString(36)}`;
     const output = document.createElement('script');
     output.id = requestId; output.type = 'application/json';
@@ -503,6 +514,7 @@
       }
       const result = JSON.parse(output.textContent);
       ctx.itemIds = result.itemIds || [];
+      ctx.playerSources = result.playerSources || [];
       ctx.readError = result.error;
       return exactRecords(result.nodes, ctx.route);
     } finally {
@@ -512,7 +524,9 @@
   }
 
   function resolveRecord(ctx, signal) {
-    const record = bestRecord([...displayedRecords(ctx), ...readRecords(document, ctx.route)], ctx);
+    const records = [...displayedRecords(ctx), ...readRecords(document, ctx.route)]
+      .map(record => joinPlayerSources(record, ctx.playerSources || []));
+    const record = bestRecord(records, ctx);
     assertCurrent(ctx, signal);
     if (!record) throw new Error(ctx.readError || 'Instagram has not exposed a complete file for this item. Let it load, then try again.');
     return record;
@@ -553,7 +567,6 @@
     if (bytes.byteLength > 512 * 1024 * 1024) throw new Error('This file exceeds the downloader’s 512 MB memory limit.');
     if (item.kind === 'video') {
       const info = inspectMP4(bytes);
-      if (!info.hasAudio && item.hasAudio !== false) throw new Error('This video file has no audio track; Instagram has not confirmed this is a silent video.');
       if (variant.width && variant.height && info.width * info.height < variant.width * variant.height) {
         throw new Error('The video file is smaller than the rendition Instagram advertised.');
       }
@@ -586,27 +599,36 @@
     const compare = (a, b) => b.width * b.height - a.width * a.height || b.bitrate - a.bitrate;
     const ranked = [...variants].sort(compare)
       .filter((v, i, all) => all.findIndex(other => other.url === v.url) === i);
-    // A distinct scalar/player URL has no advertised rendition size. Inspect it
-    // before choosing; treating unknown dimensions as low quality can miss the
-    // largest exposed file. Keep only the best inspected blob in memory.
+    // Inspect distinct sources without dimensions before ranking them. Keep
+    // only the best measured file, preferring audio when quality is equal.
     let measured = null;
     for (const variant of ranked.filter(v => !v.width || !v.height)) {
       let prepared;
       try { prepared = await fetchVariant(variant); }
       catch (error) { throw new Error(`A source without rendition dimensions could not be checked: ${error.message}`); }
       const size = { width: prepared.width, height: prepared.height, bitrate: variant.bitrate };
-      if (!measured || compare(size, measured.size) < 0) measured = { size, prepared };
+      if (!measured || compare(size, measured.size) < 0
+        || (compare(size, measured.size) === 0 && prepared.hasAudio && !measured.prepared.hasAudio)) measured = { size, prepared };
     }
     const known = ranked.filter(v => v.width && v.height);
-    if (measured && (!known.length || compare(measured.size, known[0]) <= 0)) return measured.prepared;
+    if (measured && (!known.length || compare(measured.size, known[0]) < 0)) return measured.prepared;
     if (!known.length) throw new Error('Instagram has exposed only a preview or a streaming source, not a complete file.');
-    // Retry only equivalent top renditions; a failed larger file must never
-    // cause an already inspected smaller file to be saved instead.
+    // An equivalent file with audio wins over a silent file. Silence is never
+    // a download error, and a failed larger rendition cannot select a smaller one.
+    let selected = measured && compare(measured.size, known[0]) === 0 ? measured.prepared : null;
+    if (selected && selected.hasAudio !== false) return selected;
     let failure;
     for (const variant of known.filter(v => compare(v, known[0]) === 0).slice(0, 4)) {
-      try { return await fetchVariant(variant); }
-      catch (error) { failure = error; }
+      try {
+        const prepared = await fetchVariant(variant);
+        const pixels = prepared.width * prepared.height;
+        const selectedPixels = selected ? selected.width * selected.height : 0;
+        if (!selected || pixels > selectedPixels
+          || (pixels === selectedPixels && prepared.hasAudio && !selected.hasAudio)) selected = prepared;
+        if (selected.hasAudio !== false) return selected;
+      } catch (error) { failure = error; }
     }
+    if (selected) return selected;
     throw failure;
   }
 
@@ -746,13 +768,13 @@
             if (button.dataset.action === 'open') {
               if (!openTab) throw new Error('The userscript manager’s open-tab permission is unavailable.');
               await openTab(prepared.source, { active: true, insert: true, setParent: true });
-              say(`Opened ${prepared.width} × ${prepared.height}${prepared.hasAudio ? ' · audio included' : ''}.`);
+              say(`Opened ${prepared.width} × ${prepared.height}${prepared.hasAudio ? ' · audio included' : prepared.hasAudio === false ? ' · no audio track' : ''}.`);
             } else {
               const link = document.createElement('a');
               link.href = temporaryURL(prepared.blob); link.download = filename;
               link.style.display = 'none'; document.documentElement.append(link);
               link.click(); link.remove(); started++;
-              say(`Sent ${started}${all ? ` of ${record.count}` : ''} to Safari Downloads · ${prepared.width} × ${prepared.height}${prepared.hasAudio ? ' · audio included' : ''}.`);
+              say(`Sent ${started}${all ? ` of ${record.count}` : ''} to Safari Downloads · ${prepared.width} × ${prepared.height}${prepared.hasAudio ? ' · audio included' : prepared.hasAudio === false ? ' · no audio track' : ''}.`);
             }
           }
         } catch (error) {
